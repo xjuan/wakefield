@@ -204,7 +204,7 @@ wl_surface_commit (struct wl_client *client,
   surface->pending.input_region = NULL;
 
   surface->pending.buffer = NULL;
-  surface->pending.scale = 0;
+  surface->pending.scale = 1;
 }
 
 static void
@@ -290,6 +290,7 @@ wl_compositor_create_surface (struct wl_client *client,
   wl_list_init (&surface->current.frame_callbacks);
 
   surface->current.scale = 1;
+  surface->pending.scale = 1;
 
   priv->surface = surface;
 }
