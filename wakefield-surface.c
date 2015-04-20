@@ -147,6 +147,9 @@ wl_surface_commit (struct wl_client *client,
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
 
+  if (surface->current.buffer)
+    wl_buffer_send_release (surface->current.buffer);
+
   if (surface->pending.buffer)
     surface->current.buffer = surface->pending.buffer;
 

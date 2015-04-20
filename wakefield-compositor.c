@@ -237,8 +237,6 @@ draw_surface (cairo_t                 *cr,
   else
     g_assert_not_reached ();
 
-  wl_buffer_send_release (surface->current.buffer);
-
   /* Trigger frame callbacks. */
   {
     struct wl_resource *cr;
