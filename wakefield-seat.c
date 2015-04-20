@@ -159,6 +159,11 @@ static const struct wl_seat_interface seat_interface = {
 };
 
 static void
+wl_seat_destructor (struct wl_resource *resource)
+{
+}
+
+static void
 bind_seat (struct wl_client *client,
            void *data,
            uint32_t version,
@@ -168,7 +173,7 @@ bind_seat (struct wl_client *client,
   struct wl_resource *cr;
 
   cr = wl_resource_create (client, &wl_seat_interface, version, id);
-  wl_resource_set_implementation (cr, &seat_interface, seat, unbind_resource);
+  wl_resource_set_implementation (cr, &seat_interface, seat, wl_seat_destructor);
   wl_seat_send_capabilities (cr, WL_SEAT_CAPABILITY_POINTER);
   wl_seat_send_name (cr, "seat0");
 }

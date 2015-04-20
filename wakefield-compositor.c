@@ -277,6 +277,11 @@ unbind_resource (struct wl_resource *resource)
 #include "wakefield-seat.c"
 
 static void
+wl_output_destructor (struct wl_resource *resource)
+{
+}
+
+static void
 bind_output (struct wl_client *client,
              void *data,
              uint32_t version,
@@ -286,7 +291,7 @@ bind_output (struct wl_client *client,
   struct wl_resource *cr;
 
   cr = wl_resource_create (client, &wl_output_interface, version, id);
-  wl_resource_set_destructor (cr, unbind_resource);
+  wl_resource_set_destructor (cr, wl_output_destructor);
   /* wl_list_insert (&priv->output_resources, cr); */
   wl_output_send_scale (cr, gtk_widget_get_scale_factor (GTK_WIDGET (compositor)));
 }
