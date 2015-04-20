@@ -146,12 +146,35 @@ wl_surface_commit (struct wl_client *client,
                    struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
+  struct wl_shm_buffer *shm_buffer;
+  cairo_region_t *clear_region = NULL;
+  cairo_rectangle_int_t rect = { 0, };
 
   if (surface->current.buffer)
-    wl_buffer_send_release (surface->current.buffer);
+    {
+      shm_buffer = wl_shm_buffer_get (surface->current.buffer);
+      if (shm_buffer)
+        {
+          rect.width = wl_shm_buffer_get_width (shm_buffer) / surface->current.scale;
+          rect.height = wl_shm_buffer_get_height (shm_buffer) / surface->current.scale;
+
+          clear_region = cairo_region_create_rectangle (&rect);
+        }
+      wl_buffer_send_release (surface->current.buffer);
+    }
 
   if (surface->pending.buffer)
-    surface->current.buffer = surface->pending.buffer;
+    {
+      shm_buffer = wl_shm_buffer_get (surface->pending.buffer);
+      if (clear_region && shm_buffer)
+        {
+          rect.width = wl_shm_buffer_get_width (shm_buffer) / surface->pending.scale;
+          rect.height = wl_shm_buffer_get_height (shm_buffer) / surface->pending.scale;
+
+          cairo_region_subtract_rectangle (clear_region, &rect);
+        }
+      surface->current.buffer = surface->pending.buffer;
+    }
 
   /* XXX: Should we reallocate / redraw the entire region if the buffer
    * scale changes? */
@@ -161,6 +184,12 @@ wl_surface_commit (struct wl_client *client,
   wl_list_insert_list (&surface->current.frame_callbacks,
                        &surface->pending.frame_callbacks);
   wl_list_init (&surface->pending.frame_callbacks);
+
+  if (clear_region)
+    {
+      cairo_region_union (surface->damage, clear_region);
+      cairo_region_destroy (clear_region);
+    }
 
   /* process damage */
   gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
