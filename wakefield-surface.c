@@ -209,6 +209,8 @@ wl_surface_destructor (struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
 
+  gtk_widget_queue_draw (GTK_WIDGET (surface->compositor));
+
   destroy_pending_state (&surface->pending);
   destroy_pending_state (&surface->current);
 
