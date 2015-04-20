@@ -60,6 +60,7 @@ struct WakefieldSurface
 
 struct _WakefieldCompositorPrivate
 {
+  GdkWindow *event_window;
   struct wl_display *wl_display;
   struct wl_client *client;
   int client_fd;
@@ -85,6 +86,8 @@ resource_release (struct wl_client *client,
 static void
 wakefield_compositor_realize (GtkWidget *widget)
 {
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   GtkAllocation allocation;
   GdkWindow *window;
   GdkWindowAttr attributes;
@@ -92,17 +95,24 @@ wakefield_compositor_realize (GtkWidget *widget)
 
   gtk_widget_set_realized (widget, TRUE);
 
+  window = gtk_widget_get_parent_window (widget);
+  gtk_widget_set_window (widget, window);
+  g_object_ref (window);
+
   gtk_widget_get_allocation (widget, &allocation);
 
   attributes.x = allocation.x;
   attributes.y = allocation.y;
+  attributes.width = allocation.width;
+  attributes.height = allocation.height;
+  attributes.wclass = GDK_INPUT_ONLY;
   attributes.visual = gtk_widget_get_visual (widget);
   attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;
 
-  attributes.width = allocation.width;
-  attributes.height = allocation.height;
   attributes.window_type = GDK_WINDOW_CHILD;
-  attributes.event_mask = (GDK_POINTER_MOTION_MASK |
+
+  attributes.event_mask = (gtk_widget_get_events (widget) |
+                           GDK_POINTER_MOTION_MASK |
                            GDK_BUTTON_PRESS_MASK |
                            GDK_BUTTON_RELEASE_MASK |
                            GDK_SCROLL_MASK |
@@ -113,10 +123,64 @@ wakefield_compositor_realize (GtkWidget *widget)
                            GDK_LEAVE_NOTIFY_MASK |
                            GDK_EXPOSURE_MASK);
 
-  window = gdk_window_new (gtk_widget_get_parent_window (widget),
-                           &attributes, attributes_mask);
-  gtk_widget_set_window (widget, window);
-  gtk_widget_register_window (widget, window);
+  priv->event_window = gdk_window_new (window,
+                                       &attributes, attributes_mask);
+  gtk_widget_register_window (widget, priv->event_window);
+}
+
+static void
+wakefield_compositor_unrealize (GtkWidget *widget)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  if (priv->event_window != NULL)
+    {
+      gtk_widget_unregister_window (widget, priv->event_window);
+      gdk_window_destroy (priv->event_window);
+      priv->event_window = NULL;
+    }
+
+  GTK_WIDGET_CLASS (wakefield_compositor_parent_class)->unrealize (widget);
+}
+
+static void
+wakefield_compositor_map (GtkWidget *widget)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  GTK_WIDGET_CLASS (wakefield_compositor_parent_class)->map (widget);
+
+  gdk_window_show (priv->event_window);
+}
+
+static void
+wakefield_compositor_unmap (GtkWidget *widget)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  gdk_window_hide (priv->event_window);
+
+  GTK_WIDGET_CLASS (wakefield_compositor_parent_class)->unmap (widget);
+}
+
+static void
+wakefield_compositor_size_allocate (GtkWidget *widget,
+                                    GtkAllocation *allocation)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  gtk_widget_set_allocation (widget, allocation);
+
+  if (gtk_widget_get_realized (widget))
+    gdk_window_move_resize (priv->event_window,
+                            allocation->x,
+                            allocation->y,
+                            allocation->width,
+                            allocation->height);
 }
 
 static cairo_format_t
@@ -245,6 +309,10 @@ wakefield_compositor_class_init (WakefieldCompositorClass *klass)
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
 
   widget_class->realize = wakefield_compositor_realize;
+  widget_class->unrealize = wakefield_compositor_unrealize;
+  widget_class->map = wakefield_compositor_map;
+  widget_class->unmap = wakefield_compositor_unmap;
+  widget_class->size_allocate = wakefield_compositor_size_allocate;
   widget_class->draw = wakefield_compositor_draw;
   widget_class->enter_notify_event = wakefield_compositor_enter_notify_event;
   widget_class->leave_notify_event = wakefield_compositor_leave_notify_event;
@@ -261,7 +329,7 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   int fds[2];
 
-  gtk_widget_set_has_window (GTK_WIDGET (compositor), TRUE);
+  gtk_widget_set_has_window (GTK_WIDGET (compositor), FALSE);
 
   priv->wl_display = wl_display_create ();
   wl_display_init_shm (priv->wl_display);
