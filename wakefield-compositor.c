@@ -239,13 +239,14 @@ draw_surface (cairo_t                 *cr,
 
   /* Trigger frame callbacks. */
   {
-    struct wl_resource *cr;
+    struct wl_resource *cr, *next;
     /* XXX: Should we use the frame clock for this? */
     uint32_t time = get_time ();
 
-    wl_resource_for_each (cr, &surface->current.frame_callbacks)
+    wl_resource_for_each_safe (cr, next, &surface->current.frame_callbacks)
       {
         wl_callback_send_done (cr, time);
+        wl_resource_destroy (cr);
       }
 
     wl_list_init (&surface->current.frame_callbacks);

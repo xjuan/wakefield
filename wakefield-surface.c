@@ -198,6 +198,9 @@ wl_surface_set_buffer_scale (struct wl_client *client,
 static void
 destroy_pending_state (struct WakefieldSurfacePendingState *state)
 {
+  struct wl_resource *cr, *next;
+  wl_resource_for_each_safe (cr, next, &state->frame_callbacks)
+    wl_resource_destroy (cr);
   g_clear_pointer (&state->input_region, cairo_region_destroy);
 }
 
