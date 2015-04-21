@@ -27,11 +27,17 @@
 
 #include "wakefield-compositor.h"
 #include "wakefield-private.h"
+#include "xdg-shell-server-protocol.h"
 
 struct WakefieldPointer
 {
   struct wl_list resource_list;
   struct wl_resource *cursor_surface;
+};
+
+struct WakefieldShell
+{
+  struct wl_list resource_list;
 };
 
 struct WakefieldSeat
@@ -52,6 +58,7 @@ struct _WakefieldCompositorPrivate
 
   struct wl_list surfaces;
   struct WakefieldSeat seat;
+  struct WakefieldShell shell;
 };
 typedef struct _WakefieldCompositorPrivate WakefieldCompositorPrivate;
 
@@ -367,6 +374,83 @@ const static struct wl_compositor_interface compositor_interface = {
   wl_compositor_create_region
 };
 
+
+static void
+xdg_shell_destroy (struct wl_client *client,
+                   struct wl_resource *resource)
+{
+  wl_resource_destroy (resource);
+}
+
+static void
+xdg_use_unstable_version (struct wl_client *client,
+                          struct wl_resource *resource,
+                          int32_t version)
+{
+  if (version > 1)
+    {
+      wl_resource_post_error (resource, 1,
+                              "xdg-shell:: version not implemented yet.");
+      return;
+    }
+}
+
+static void
+xdg_get_xdg_surface (struct wl_client *client,
+                     struct wl_resource *resource,
+                     uint32_t id,
+                     struct wl_resource *surface_resource)
+{
+  wl_resource_post_error (resource, 1,
+                          "xdg-shell:: get_surface not implemented yet.");
+}
+
+static void
+xdg_get_xdg_popup (struct wl_client *client,
+                   struct wl_resource *resource,
+                   uint32_t id,
+                   struct wl_resource *surface_resource,
+                   struct wl_resource *parent_resource,
+                   struct wl_resource *seat_resource,
+                   uint32_t serial,
+                   int32_t x, int32_t y)
+{
+  wl_resource_post_error (resource, 1,
+                          "xdg-shell:: get_popup not implemented yet.");
+}
+
+static void
+xdg_pong (struct wl_client *client,
+          struct wl_resource *resource,
+          uint32_t serial)
+{
+  wl_resource_post_error (resource, 1,
+                          "xdg-shell:: pong not implemented yet.");
+}
+
+static const struct xdg_shell_interface xdg_implementation = {
+  xdg_shell_destroy,
+  xdg_use_unstable_version,
+  xdg_get_xdg_surface,
+  xdg_get_xdg_popup,
+  xdg_pong
+};
+
+#define XDG_SHELL_VERSION 1
+
+static void
+bind_xdg_shell(struct wl_client *client, void *data, uint32_t version, uint32_t id)
+{
+  WakefieldCompositor *compositor = data;
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldShell *shell = &priv->shell;
+  struct wl_resource *cr;
+
+  cr = wl_resource_create (client,  &xdg_shell_interface, XDG_SHELL_VERSION, id);
+  wl_resource_set_implementation (cr, &xdg_shell_interface, shell, unbind_resource);
+  wl_list_insert (&shell->resource_list, wl_resource_get_link (cr));
+}
+
 static void
 bind_compositor (struct wl_client *client,
                  void *data,
@@ -393,6 +477,9 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
 
   wl_global_create (priv->wl_display, &wl_compositor_interface,
                     WL_COMPOSITOR_VERSION, compositor, bind_compositor);
+
+  wl_global_create (priv->wl_display, &xdg_shell_interface,
+                    XDG_SHELL_VERSION, compositor, bind_xdg_shell);
 
   wakefield_seat_init (&priv->seat, priv->wl_display);
   wakefield_output_init (compositor);
