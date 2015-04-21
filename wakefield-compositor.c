@@ -393,6 +393,23 @@ wakefield_seat_init (struct WakefieldSeat *seat,
 }
 
 static void
+refresh_output (WakefieldCompositor *compositor,
+                struct wl_resource *cr)
+{
+  GtkAllocation allocation;
+
+  gtk_widget_get_allocation (GTK_WIDGET (compositor), &allocation);
+
+  wl_output_send_scale (cr, gtk_widget_get_scale_factor (GTK_WIDGET (compositor)));
+  wl_output_send_mode (cr,
+                       WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED,
+                       allocation.width,
+                       allocation.height,
+                       60);
+  wl_output_send_done (cr);
+}
+
+static void
 bind_output (struct wl_client *client,
              void *data,
              uint32_t version,
@@ -407,7 +424,14 @@ bind_output (struct wl_client *client,
   wl_resource_set_implementation (cr, NULL, output, unbind_resource);
   wl_list_insert (&output->resource_list, wl_resource_get_link (cr));
 
-  wl_output_send_scale (cr, gtk_widget_get_scale_factor (GTK_WIDGET (compositor)));
+  wl_output_send_geometry (cr,
+                           0, 0,
+                           0, 0, /* mm */
+                           0, /* subpixel */
+                           "Wakefield", "Gtk",
+                           WL_OUTPUT_TRANSFORM_NORMAL);
+
+  refresh_output (compositor, cr);
 }
 
 #define WL_OUTPUT_VERSION 2
