@@ -21,8 +21,15 @@ CLEANFILES += Wakefield-1.0.gir Wakefield-1.0.typelib
 
 include Makefile.introspection
 
+xdg-shell-protocol.c : protocol/xdg-shell.xml
+	wayland-scanner code < $< > $@
+	sed -i -e 's/WL_EXPORT //' $@
+
+xdg-shell-server-protocol.h : protocol/xdg-shell.xml
+	wayland-scanner server-header < $< > $@
+
 libwakefield.so: CFLAGS += -fPIC -shared
-libwakefield.so: wakefield-compositor.o wakefield-surface.o
+libwakefield.so: wakefield-compositor.o wakefield-surface.o xdg-shell-server-protocol.h xdg-shell-protocol.o
 	$(CC) $(CFLAGS) -o $@ wakefield-compositor.o wakefield-surface.o $(LDFLAGS)
 
 CLEANFILES += libwakefield.so wakefield-compositor.o wakefield-surface.o
