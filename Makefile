@@ -30,7 +30,7 @@ xdg-shell-server-protocol.h : protocol/xdg-shell.xml
 
 libwakefield.so: CFLAGS += -fPIC -shared
 libwakefield.so: wakefield-compositor.o wakefield-surface.o xdg-shell-server-protocol.h xdg-shell-protocol.o
-	$(CC) $(CFLAGS) -o $@ wakefield-compositor.o wakefield-surface.o $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ wakefield-compositor.o wakefield-surface.o xdg-shell-protocol.o $(LDFLAGS)
 
 CLEANFILES += libwakefield.so wakefield-compositor.o wakefield-surface.o
 

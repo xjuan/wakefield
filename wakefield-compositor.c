@@ -54,6 +54,7 @@ struct WakefieldRegion
 
 struct _WakefieldCompositorPrivate
 {
+  GdkWindow *event_window;
   struct wl_display *wl_display;
 
   struct wl_list surfaces;
@@ -62,7 +63,241 @@ struct _WakefieldCompositorPrivate
 };
 typedef struct _WakefieldCompositorPrivate WakefieldCompositorPrivate;
 
-G_DEFINE_TYPE_WITH_PRIVATE (WakefieldCompositor, wakefield_compositor, G_TYPE_OBJECT);
+G_DEFINE_TYPE_WITH_PRIVATE (WakefieldCompositor, wakefield_compositor, GTK_TYPE_WIDGET);
+
+static void
+wakefield_compositor_realize (GtkWidget *widget)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  GtkAllocation allocation;
+  GdkWindow *window;
+  GdkWindowAttr attributes;
+  gint attributes_mask;
+
+  gtk_widget_set_realized (widget, TRUE);
+
+  window = gtk_widget_get_parent_window (widget);
+  gtk_widget_set_window (widget, window);
+  g_object_ref (window);
+
+  gtk_widget_get_allocation (widget, &allocation);
+
+  attributes.x = allocation.x;
+  attributes.y = allocation.y;
+  attributes.width = allocation.width;
+  attributes.height = allocation.height;
+  attributes.wclass = GDK_INPUT_ONLY;
+  attributes.visual = gtk_widget_get_visual (widget);
+  attributes_mask = GDK_WA_X | GDK_WA_Y | GDK_WA_VISUAL;
+
+  attributes.window_type = GDK_WINDOW_CHILD;
+
+  attributes.event_mask = (gtk_widget_get_events (widget) |
+                           GDK_POINTER_MOTION_MASK |
+                           GDK_BUTTON_PRESS_MASK |
+                           GDK_BUTTON_RELEASE_MASK |
+                           GDK_SCROLL_MASK |
+                           GDK_FOCUS_CHANGE_MASK |
+                           GDK_KEY_PRESS_MASK |
+                           GDK_KEY_RELEASE_MASK |
+                           GDK_ENTER_NOTIFY_MASK |
+                           GDK_LEAVE_NOTIFY_MASK |
+                           GDK_EXPOSURE_MASK);
+
+  priv->event_window = gdk_window_new (window,
+                                       &attributes, attributes_mask);
+  gtk_widget_register_window (widget, priv->event_window);
+}
+
+static void
+wakefield_compositor_unrealize (GtkWidget *widget)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  if (priv->event_window != NULL)
+    {
+      gtk_widget_unregister_window (widget, priv->event_window);
+      gdk_window_destroy (priv->event_window);
+      priv->event_window = NULL;
+    }
+
+  GTK_WIDGET_CLASS (wakefield_compositor_parent_class)->unrealize (widget);
+}
+
+
+static void
+wakefield_compositor_map (GtkWidget *widget)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  GTK_WIDGET_CLASS (wakefield_compositor_parent_class)->map (widget);
+
+  gdk_window_show (priv->event_window);
+}
+
+static void
+wakefield_compositor_unmap (GtkWidget *widget)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  gdk_window_hide (priv->event_window);
+
+  GTK_WIDGET_CLASS (wakefield_compositor_parent_class)->unmap (widget);
+}
+
+static void
+wakefield_compositor_size_allocate (GtkWidget *widget,
+                                    GtkAllocation *allocation)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  gtk_widget_set_allocation (widget, allocation);
+
+  if (gtk_widget_get_realized (widget))
+    gdk_window_move_resize (priv->event_window,
+                            allocation->x,
+                            allocation->y,
+                            allocation->width,
+                            allocation->height);
+}
+
+static gboolean
+wakefield_compositor_draw (GtkWidget *widget,
+                           cairo_t   *cr)
+{
+#if 0
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  if (priv->surface)
+    draw_surface (cr, priv->surface);
+
+#endif
+
+  return TRUE;
+}
+
+#if 0
+
+static uint32_t
+convert_gdk_button_to_libinput (int gdk_button)
+{
+ switch (gdk_button)
+   {
+   case 3:
+     return 273;
+   case 2:
+     return 274;
+   default:
+     return gdk_button + 271;
+   }
+}
+
+static void
+broadcast_button (GtkWidget      *widget,
+                  GdkEventButton *event)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+  uint32_t button;
+
+  button = convert_gdk_button_to_libinput (event->button);
+
+  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
+    {
+      wl_pointer_send_button (resource, serial,
+                              event->time,
+                              button,
+                              (event->type == GDK_BUTTON_PRESS ? 1 : 0));
+    }
+}
+
+#endif
+
+static gboolean
+wakefield_compositor_button_press_event (GtkWidget      *widget,
+                                         GdkEventButton *event)
+{
+  //broadcast_button (widget, event);
+  return TRUE;
+}
+
+static gboolean
+wakefield_compositor_button_release_event (GtkWidget      *widget,
+                                           GdkEventButton *event)
+{
+  //broadcast_button (widget, event);
+  return TRUE;
+}
+
+static gboolean
+wakefield_compositor_motion_notify_event (GtkWidget      *widget,
+                                          GdkEventMotion *event)
+{
+#if 0
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *resource;
+
+  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
+    {
+      wl_pointer_send_motion (resource,
+                              event->time,
+                              wl_fixed_from_int (event->x),
+                              wl_fixed_from_int (event->y));
+    }
+#endif
+
+  return FALSE;
+}
+
+static gboolean
+wakefield_compositor_enter_notify_event (GtkWidget        *widget,
+                                         GdkEventCrossing *event)
+{
+#if 0
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+
+  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
+    {
+      wl_pointer_send_enter (resource, serial,
+                             priv->surface->resource,
+                             wl_fixed_from_int (event->x),
+                             wl_fixed_from_int (event->y));
+    }
+#endif
+
+  return FALSE;
+}
+
+static gboolean
+wakefield_compositor_leave_notify_event (GtkWidget        *widget,
+                                         GdkEventCrossing *event)
+{
+#if 0
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+
+  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
+    {
+      wl_pointer_send_leave (resource, serial, priv->surface->resource);
+    }
+#endif
+
+  return FALSE;
+}
 
 static void
 resource_release (struct wl_client *client,
@@ -105,117 +340,6 @@ seat_get_pointer (struct wl_client    *client,
   wl_resource_set_implementation (cr, &pointer_interface, pointer, unbind_resource);
   wl_list_insert (&pointer->resource_list, wl_resource_get_link (cr));
 }
-
-#if 0
-
-static uint32_t
-convert_gdk_button_to_libinput (int gdk_button)
-{
- switch (gdk_button)
-   {
-   case 3:
-     return 273;
-   case 2:
-     return 274;
-   default:
-     return gdk_button + 271;
-   }
-}
-
-static void
-broadcast_button (GtkWidget      *widget,
-                  GdkEventButton *event)
-{
-  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
-  uint32_t button;
-
-  button = convert_gdk_button_to_libinput (event->button);
-
-  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
-    {
-      wl_pointer_send_button (resource, serial,
-                              event->time,
-                              button,
-                              (event->type == GDK_BUTTON_PRESS ? 1 : 0));
-    }
-}
-
-static gboolean
-wakefield_compositor_button_press_event (GtkWidget      *widget,
-                                         GdkEventButton *event)
-{
-  broadcast_button (widget, event);
-  return TRUE;
-}
-
-static gboolean
-wakefield_compositor_button_release_event (GtkWidget      *widget,
-                                           GdkEventButton *event)
-{
-  broadcast_button (widget, event);
-  return TRUE;
-}
-
-static gboolean
-wakefield_compositor_motion_notify_event (GtkWidget      *widget,
-                                          GdkEventMotion *event)
-{
-  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *resource;
-
-  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
-    {
-      wl_pointer_send_motion (resource,
-                              event->time,
-                              wl_fixed_from_int (event->x),
-                              wl_fixed_from_int (event->y));
-    }
-
-  return FALSE;
-}
-
-static gboolean
-wakefield_compositor_enter_notify_event (GtkWidget        *widget,
-                                         GdkEventCrossing *event)
-{
-  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
-
-  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
-    {
-      wl_pointer_send_enter (resource, serial,
-                             priv->surface->resource,
-                             wl_fixed_from_int (event->x),
-                             wl_fixed_from_int (event->y));
-    }
-
-  return FALSE;
-}
-
-static gboolean
-wakefield_compositor_leave_notify_event (GtkWidget        *widget,
-                                         GdkEventCrossing *event)
-{
-  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
-
-  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
-    {
-      wl_pointer_send_leave (resource, serial, priv->surface->resource);
-    }
-
-  return FALSE;
-}
-
-#endif
 
 static void
 wakefield_pointer_init (struct WakefieldPointer *pointer)
@@ -472,6 +596,8 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   int fds[2];
 
+  gtk_widget_set_has_window (GTK_WIDGET (compositor), FALSE);
+
   priv->wl_display = wl_display_create ();
   wl_display_init_shm (priv->wl_display);
 
@@ -498,6 +624,19 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
 static void
 wakefield_compositor_class_init (WakefieldCompositorClass *klass)
 {
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+
+  widget_class->realize = wakefield_compositor_realize;
+  widget_class->unrealize = wakefield_compositor_unrealize;
+  widget_class->map = wakefield_compositor_map;
+  widget_class->unmap = wakefield_compositor_unmap;
+  widget_class->size_allocate = wakefield_compositor_size_allocate;
+  widget_class->draw = wakefield_compositor_draw;
+  widget_class->enter_notify_event = wakefield_compositor_enter_notify_event;
+  widget_class->leave_notify_event = wakefield_compositor_leave_notify_event;
+  widget_class->button_press_event = wakefield_compositor_button_press_event;
+  widget_class->button_release_event = wakefield_compositor_button_release_event;
+  widget_class->motion_notify_event = wakefield_compositor_motion_notify_event;
 }
 
 /* Wayland GSource */
