@@ -49,6 +49,21 @@ seat_get_pointer (struct wl_client    *client,
   wl_list_insert (&pointer->resource_list, wl_resource_get_link (cr));
 }
 
+
+static uint32_t
+convert_gdk_button_to_libinput (int gdk_button)
+{
+ switch (gdk_button)
+   {
+   case 3:
+     return 273;
+   case 2:
+     return 274;
+   default:
+     return gdk_button + 271;
+   }
+}
+
 static void
 broadcast_button (GtkWidget      *widget,
                   GdkEventButton *event)
@@ -59,8 +74,7 @@ broadcast_button (GtkWidget      *widget,
   uint32_t serial = wl_display_next_serial (priv->wl_display);
   uint32_t button;
 
-  /* XXX: Convert to evdev */
-  button = event->button;
+  button = convert_gdk_button_to_libinput (event->button);
 
   wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
     {
