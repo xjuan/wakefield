@@ -40,6 +40,11 @@ struct WakefieldShell
   struct wl_list resource_list;
 };
 
+struct WakefieldOutput
+{
+  struct wl_list resource_list;
+};
+
 struct WakefieldSeat
 {
   struct WakefieldPointer pointer;
@@ -60,6 +65,7 @@ struct _WakefieldCompositorPrivate
   struct wl_list surfaces;
   struct WakefieldSeat seat;
   struct WakefieldShell shell;
+  struct WakefieldOutput output;
 };
 typedef struct _WakefieldCompositorPrivate WakefieldCompositorPrivate;
 
@@ -387,22 +393,21 @@ wakefield_seat_init (struct WakefieldSeat *seat,
 }
 
 static void
-wl_output_destructor (struct wl_resource *resource)
-{
-}
-
-static void
 bind_output (struct wl_client *client,
              void *data,
              uint32_t version,
              uint32_t id)
 {
+  WakefieldCompositor *compositor = data;
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldOutput *output = &priv->output;
   struct wl_resource *cr;
 
   cr = wl_resource_create (client, &wl_output_interface, version, id);
-  wl_resource_set_destructor (cr, wl_output_destructor);
-  /* wl_list_insert (&priv->output_resources, cr); */
-  wl_output_send_scale (cr, 1);
+  wl_resource_set_implementation (cr, NULL, output, unbind_resource);
+  wl_list_insert (&output->resource_list, wl_resource_get_link (cr));
+
+  wl_output_send_scale (cr, gtk_widget_get_scale_factor (GTK_WIDGET (compositor)));
 }
 
 #define WL_OUTPUT_VERSION 2
