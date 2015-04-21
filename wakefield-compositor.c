@@ -440,7 +440,7 @@ static void
 wakefield_output_init (WakefieldCompositor *compositor)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  /* wl_list_init (&priv->output_resources); */
+  wl_list_init (&priv->output.resource_list);
   wl_global_create (priv->wl_display, &wl_output_interface,
                     WL_OUTPUT_VERSION, compositor, bind_output);
 }
@@ -540,7 +540,7 @@ xdg_use_unstable_version (struct wl_client *client,
                           struct wl_resource *resource,
                           int32_t version)
 {
-  if (version > 1)
+  if (version > 5)
     {
       wl_resource_post_error (resource, 1,
                               "xdg-shell:: version not implemented yet.");
@@ -600,7 +600,7 @@ bind_xdg_shell(struct wl_client *client, void *data, uint32_t version, uint32_t 
   struct wl_resource *cr;
 
   cr = wl_resource_create (client,  &xdg_shell_interface, XDG_SHELL_VERSION, id);
-  wl_resource_set_implementation (cr, &xdg_shell_interface, shell, unbind_resource);
+  wl_resource_set_implementation (cr, &xdg_implementation, shell, unbind_resource);
   wl_list_insert (&shell->resource_list, wl_resource_get_link (cr));
 }
 
@@ -635,6 +635,7 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
 
   wl_global_create (priv->wl_display, &xdg_shell_interface,
                     XDG_SHELL_VERSION, compositor, bind_xdg_shell);
+  wl_list_init (&priv->shell.resource_list);
 
   wakefield_seat_init (&priv->seat, priv->wl_display);
   wakefield_output_init (compositor);
