@@ -237,18 +237,19 @@ static void
 wl_surface_destructor (struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
+  WakefieldCompositor *compositor = surface->compositor;
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
 
   gtk_widget_queue_draw (GTK_WIDGET (surface->compositor));
 
   destroy_pending_state (&surface->pending);
   destroy_pending_state (&surface->current);
 
+  wl_list_remove (&surface->surfaces_link);
+
   /* XXX */
-  {
-    WakefieldCompositor *compositor = surface->compositor;
-    WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  if (surface == priv->surface)
     priv->surface = NULL;
-  }
 }
 
 static const struct wl_surface_interface surface_interface = {
@@ -272,12 +273,8 @@ wl_compositor_create_surface (struct wl_client *client,
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldSurface *surface;
 
-  /* XXX: For now, treat the first surface created as the proper
-   * preview surface and leak all the rest until we get a
-   * special Wakefield extension... */
-
-  if (priv->surface)
-    return;
+  /* XXX: For now, treat the last surface created as the proper
+   * preview surface until we get a special Wakefield extension... */
 
   surface = g_slice_new0 (struct WakefieldSurface);
   surface->compositor = compositor;
@@ -291,6 +288,8 @@ wl_compositor_create_surface (struct wl_client *client,
 
   surface->current.scale = 1;
   surface->pending.scale = 1;
+
+  wl_list_insert (&priv->surfaces, &surface->surfaces_link);
 
   priv->surface = surface;
 }

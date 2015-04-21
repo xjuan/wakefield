@@ -56,6 +56,7 @@ struct WakefieldSurface
 
   cairo_region_t *damage;
   struct WakefieldSurfacePendingState pending, current;
+  struct wl_list surfaces_link;
 };
 
 struct _WakefieldCompositorPrivate
@@ -66,6 +67,7 @@ struct _WakefieldCompositorPrivate
   int client_fd;
 
   struct WakefieldSurface *surface;
+  struct wl_list surfaces;
   struct WakefieldSeat seat;
 };
 typedef struct _WakefieldCompositorPrivate WakefieldCompositorPrivate;
@@ -341,6 +343,8 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
   wakefield_surface_init (compositor);
   wakefield_seat_init (&priv->seat, priv->wl_display);
   wakefield_output_init (compositor);
+
+  wl_list_init (&priv->surfaces);
 
   socketpair (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds);
   priv->client = wl_client_create (priv->wl_display, fds[0]);
