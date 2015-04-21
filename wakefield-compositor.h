@@ -36,14 +36,12 @@ typedef struct _WakefieldCompositorClass   WakefieldCompositorClass;
 
 struct _WakefieldCompositor
 {
-  GtkWidget parent;
+  GObject parent;
 };
 
 struct _WakefieldCompositorClass
 {
-  GtkWidgetClass parent_class;
+  GObjectClass parent_class;
 };
 
 GType wakefield_compositor_get_type (void) G_GNUC_CONST;
-
-int wakefield_compositor_get_fd (WakefieldCompositor *compositor);

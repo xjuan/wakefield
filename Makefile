@@ -4,7 +4,7 @@ PKGS = gtk+-3.0 wayland-server wayland-client
 CFLAGS = $(shell pkg-config --cflags $(PKGS)) -Wall -Werror -g -O0 -Wno-deprecated-declarations -D_GNU_SOURCE
 LDFLAGS = $(shell pkg-config --libs $(PKGS))
 
-FILES = wakefield-compositor.c wakefield-compositor.h
+FILES = wakefield-compositor.c wakefield-surface.c wakefield-compositor.h wakefield-private.h
 
 all: libwakefield.so test-compositor test-client test-client-2
 
@@ -16,14 +16,16 @@ Wakefield_1_0_gir_INCLUDES = Gtk-3.0
 Wakefield_1_0_gir_CFLAGS = $(CFLAGS)
 Wakefield_1_0_gir_LIBS = wakefield
 Wakefield_1_0_gir_FILES = $(FILES)
+
 CLEANFILES += Wakefield-1.0.gir Wakefield-1.0.typelib
 
 include Makefile.introspection
 
 libwakefield.so: CFLAGS += -fPIC -shared
-libwakefield.so: wakefield-compositor.o wakefield-surface.c wakefield-seat.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
-CLEANFILES += libwakefield.so wakefield-compositor.o
+libwakefield.so: wakefield-compositor.o wakefield-surface.o
+	$(CC) $(CFLAGS) -o $@ wakefield-compositor.o wakefield-surface.o $(LDFLAGS)
+
+CLEANFILES += libwakefield.so wakefield-compositor.o wakefield-surface.o
 
 test-compositor: LDFLAGS += -L. -lwakefield
 

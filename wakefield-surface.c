@@ -18,69 +18,113 @@
  *
  * Written by:
  *     Jasper St. Pierre <jstpierre@mecheye.net>
+ *     Alexander Larsson <alexl@redhat.com>
  */
 
-#define COMPOSITOR_VERSION 3
+#include "wakefield-private.h"
 
-struct WakefieldRegion
+struct WakefieldSurfacePendingState
+{
+  struct wl_resource *buffer;
+  int scale;
+
+  cairo_region_t *input_region;
+  struct wl_list frame_callbacks;
+};
+
+struct WakefieldSurface
 {
   struct wl_resource *resource;
-  cairo_region_t *region;
+
+  cairo_region_t *damage;
+  struct WakefieldSurfacePendingState pending, current;
 };
 
-static void
-wl_region_add (struct wl_client *client,
-               struct wl_resource *resource,
-               gint32 x,
-               gint32 y,
-               gint32 width,
-               gint32 height)
+#if 0
+static cairo_format_t
+cairo_format_for_wl_shm_format (enum wl_shm_format format)
 {
-  struct WakefieldRegion *region = wl_resource_get_user_data (resource);
-  cairo_rectangle_int_t rectangle = { x, y, width, height };
-  cairo_region_union_rectangle (region->region, &rectangle);
+  switch (format)
+    {
+    case WL_SHM_FORMAT_ARGB8888:
+      return CAIRO_FORMAT_ARGB32;
+    case WL_SHM_FORMAT_XRGB8888:
+      return CAIRO_FORMAT_RGB24;
+    default:
+      g_assert_not_reached ();
+    }
+}
+
+static uint32_t
+get_time (void)
+{
+  struct timeval tv;
+  gettimeofday (&tv, NULL);
+  return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
 static void
-wl_region_subtract (struct wl_client *client,
-                    struct wl_resource *resource,
-                    gint32 x,
-                    gint32 y,
-                    gint32 width,
-                    gint32 height)
+draw_surface (cairo_t                 *cr,
+              struct WakefieldSurface *surface)
 {
-  struct WakefieldRegion *region = wl_resource_get_user_data (resource);
-  cairo_rectangle_int_t rectangle = { x, y, width, height };
-  cairo_region_subtract_rectangle (region->region, &rectangle);
-}
+  struct wl_shm_buffer *shm_buffer;
 
-static const struct wl_region_interface region_interface = {
-  resource_release,
-  wl_region_add,
-  wl_region_subtract
-};
+  shm_buffer = wl_shm_buffer_get (surface->current.buffer);
+  if (shm_buffer)
+    {
+      cairo_surface_t *cr_surface;
+
+      wl_shm_buffer_begin_access (shm_buffer);
+
+      cr_surface = cairo_image_surface_create_for_data (wl_shm_buffer_get_data (shm_buffer),
+                                                        cairo_format_for_wl_shm_format (wl_shm_buffer_get_format (shm_buffer)),
+                                                        wl_shm_buffer_get_width (shm_buffer),
+                                                        wl_shm_buffer_get_height (shm_buffer),
+                                                        wl_shm_buffer_get_stride (shm_buffer));
+      cairo_surface_set_device_scale (cr_surface, surface->current.scale, surface->current.scale);
+
+      cairo_set_source_surface (cr, cr_surface, 0, 0);
+
+      /* XXX: Do scaling of our surface to match our allocation. */
+      cairo_paint (cr);
+
+      cairo_surface_destroy (cr_surface);
+
+      wl_shm_buffer_end_access (shm_buffer);
+    }
+  else
+    g_assert_not_reached ();
+
+  /* Trigger frame callbacks. */
+  {
+    struct wl_resource *cr, *next;
+    /* XXX: Should we use the frame clock for this? */
+    uint32_t time = get_time ();
+
+    wl_resource_for_each_safe (cr, next, &surface->current.frame_callbacks)
+      {
+        wl_callback_send_done (cr, time);
+        wl_resource_destroy (cr);
+      }
+
+    wl_list_init (&surface->current.frame_callbacks);
+  }
+}
+#endif
 
 static void
-wl_region_destructor (struct wl_resource *resource)
+resource_release (struct wl_client *client,
+                  struct wl_resource *resource)
 {
-  struct WakefieldRegion *region = wl_resource_get_user_data (resource);
-
-  cairo_region_destroy (region->region);
-  g_slice_free (struct WakefieldRegion, region);
+  wl_resource_destroy (resource);
 }
 
 static void
-wl_compositor_create_region (struct wl_client *client,
-                             struct wl_resource *compositor_resource,
-                             uint32_t id)
+unbind_resource (struct wl_resource *resource)
 {
-  struct WakefieldRegion *region = g_slice_new0 (struct WakefieldRegion);
-
-  region->resource = wl_resource_create (client, &wl_region_interface, wl_resource_get_version (compositor_resource), id);
-  wl_resource_set_implementation (region->resource, &region_interface, region, wl_region_destructor);
-
-  region->region = cairo_region_create ();
+  wl_list_remove (wl_resource_get_link (resource));
 }
+
 
 static void
 wl_surface_attach (struct wl_client *client,
@@ -136,8 +180,7 @@ wl_surface_set_input_region (struct wl_client *client,
   g_clear_pointer (&surface->pending.input_region, cairo_region_destroy);
   if (region_resource)
     {
-      struct WakefieldRegion *region = wl_resource_get_user_data (region_resource);
-      surface->pending.input_region = cairo_region_copy (region->region);
+      surface->pending.input_region = wakefield_region_get_region (region_resource);
     }
 }
 
@@ -192,7 +235,7 @@ wl_surface_commit (struct wl_client *client,
     }
 
   /* process damage */
-  gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
+  //  gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
 
   /* ... and then empty it */
   {
@@ -237,19 +280,15 @@ static void
 wl_surface_destructor (struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
-  WakefieldCompositor *compositor = surface->compositor;
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
 
-  gtk_widget_queue_draw (GTK_WIDGET (surface->compositor));
+  //gtk_widget_queue_draw (GTK_WIDGET (surface->compositor));
 
   destroy_pending_state (&surface->pending);
   destroy_pending_state (&surface->current);
 
-  wl_list_remove (&surface->surfaces_link);
+  wl_list_remove (wl_resource_get_link (resource));
 
-  /* XXX */
-  if (surface == priv->surface)
-    priv->surface = NULL;
+  g_slice_free (struct WakefieldSurface, surface);
 }
 
 static const struct wl_surface_interface surface_interface = {
@@ -264,20 +303,14 @@ static const struct wl_surface_interface surface_interface = {
   wl_surface_set_buffer_scale
 };
 
-static void
-wl_compositor_create_surface (struct wl_client *client,
-                              struct wl_resource *compositor_resource,
-                              uint32_t id)
+struct wl_resource *
+wakefield_surface_new (struct wl_client *client,
+                       struct wl_resource *compositor_resource,
+                       uint32_t id)
 {
-  WakefieldCompositor *compositor = wl_resource_get_user_data (compositor_resource);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldSurface *surface;
 
-  /* XXX: For now, treat the last surface created as the proper
-   * preview surface until we get a special Wakefield extension... */
-
   surface = g_slice_new0 (struct WakefieldSurface);
-  surface->compositor = compositor;
   surface->damage = cairo_region_create ();
 
   surface->resource = wl_resource_create (client, &wl_surface_interface, wl_resource_get_version (compositor_resource), id);
@@ -289,32 +322,5 @@ wl_compositor_create_surface (struct wl_client *client,
   surface->current.scale = 1;
   surface->pending.scale = 1;
 
-  wl_list_insert (&priv->surfaces, &surface->surfaces_link);
-
-  priv->surface = surface;
-}
-
-const static struct wl_compositor_interface compositor_interface = {
-  wl_compositor_create_surface,
-  wl_compositor_create_region
-};
-
-static void
-bind_compositor (struct wl_client *client,
-                 void *data,
-                 uint32_t version,
-                 uint32_t id)
-{
-  WakefieldCompositor *compositor = data;
-  struct wl_resource *cr;
-
-  cr = wl_resource_create (client, &wl_compositor_interface, version, id);
-  wl_resource_set_implementation (cr, &compositor_interface, compositor, NULL);
-}
-
-static void
-wakefield_surface_init (WakefieldCompositor *compositor)
-{
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  wl_global_create (priv->wl_display, &wl_compositor_interface, COMPOSITOR_VERSION, compositor, bind_compositor);
+  return surface->resource;
 }
