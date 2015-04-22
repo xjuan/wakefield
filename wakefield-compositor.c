@@ -29,10 +29,19 @@
 #include "wakefield-private.h"
 #include "xdg-shell-server-protocol.h"
 
+#define wl_resource_for_each_reverse(resource, list)				\
+	for (resource = 0, resource = wl_resource_from_link((list)->prev);	\
+	     wl_resource_get_link(resource) != (list);				\
+	     resource = wl_resource_from_link(wl_resource_get_link(resource)->prev))
+
 struct WakefieldPointer
 {
   struct wl_list resource_list;
   struct wl_resource *cursor_surface;
+
+  gboolean entered_compositor;
+  struct wl_resource *entered_surface;
+  double last_x, last_y;
 };
 
 struct WakefieldOutput
@@ -188,8 +197,6 @@ wakefield_compositor_draw (GtkWidget *widget,
   return TRUE;
 }
 
-#if 0
-
 static uint32_t
 convert_gdk_button_to_libinput (int gdk_button)
 {
@@ -210,28 +217,28 @@ broadcast_button (GtkWidget      *widget,
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *resource;
+  struct wl_resource *pointer_resource;
   uint32_t serial = wl_display_next_serial (priv->wl_display);
-  uint32_t button;
 
-  button = convert_gdk_button_to_libinput (event->button);
+  if (priv->seat.pointer.entered_surface == NULL)
+    return;
 
-  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
-    {
-      wl_pointer_send_button (resource, serial,
-                              event->time,
-                              button,
-                              (event->type == GDK_BUTTON_PRESS ? 1 : 0));
-    }
+  /* TODO: Shouldn't there be some kind of passive grab thing going on here? */
+
+  pointer_resource = wl_resource_find_for_client (&priv->seat.pointer.resource_list,
+                                                  wl_resource_get_client (priv->seat.pointer.entered_surface));
+  if (pointer_resource)
+    wl_pointer_send_button (pointer_resource, serial,
+                            event->time,
+                            convert_gdk_button_to_libinput (event->button),
+                            (event->type == GDK_BUTTON_PRESS ? 1 : 0));
 }
-
-#endif
 
 static gboolean
 wakefield_compositor_button_press_event (GtkWidget      *widget,
                                          GdkEventButton *event)
 {
-  //broadcast_button (widget, event);
+  broadcast_button (widget, event);
   return TRUE;
 }
 
@@ -239,7 +246,7 @@ static gboolean
 wakefield_compositor_button_release_event (GtkWidget      *widget,
                                            GdkEventButton *event)
 {
-  //broadcast_button (widget, event);
+  broadcast_button (widget, event);
   return TRUE;
 }
 
@@ -247,41 +254,96 @@ static gboolean
 wakefield_compositor_motion_notify_event (GtkWidget      *widget,
                                           GdkEventMotion *event)
 {
-#if 0
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *resource;
+  struct wl_resource *pointer_resource;
 
-  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
+  priv->seat.pointer.last_x = event->x;
+  priv->seat.pointer.last_y = event->y;
+
+  if (priv->seat.pointer.entered_surface)
     {
-      wl_pointer_send_motion (resource,
-                              event->time,
-                              wl_fixed_from_int (event->x),
-                              wl_fixed_from_int (event->y));
+      pointer_resource = wl_resource_find_for_client (&priv->seat.pointer.resource_list,
+                                                      wl_resource_get_client (priv->seat.pointer.entered_surface));
+      if (pointer_resource)
+        wl_pointer_send_motion (pointer_resource,
+                                event->time,
+                                wl_fixed_from_double (event->x),
+                                wl_fixed_from_double (event->y));
     }
-#endif
 
   return FALSE;
+}
+
+static struct wl_resource *
+wakefield_compositor_get_topmost_surface (WakefieldCompositor *compositor)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface_resource;
+
+  wl_resource_for_each_reverse (xdg_surface_resource, &priv->xdg_surfaces)
+    {
+      struct wl_resource *surface_resource;
+      surface_resource = wakefield_xdg_surface_get_surface (xdg_surface_resource);
+      if (surface_resource != NULL)
+        return surface_resource;
+    }
+
+  return NULL;
+}
+
+static void
+wakefield_compositor_send_enter_leave (WakefieldCompositor *compositor)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+  struct wl_resource *topmost_surface, *pointer_resource;
+
+  topmost_surface = NULL;
+
+  if (priv->seat.pointer.entered_compositor)
+    topmost_surface = wakefield_compositor_get_topmost_surface (compositor);
+
+  if (topmost_surface != priv->seat.pointer.entered_surface)
+    {
+      if (priv->seat.pointer.entered_surface)
+        {
+          pointer_resource = wl_resource_find_for_client (&priv->seat.pointer.resource_list,
+                                                          wl_resource_get_client (priv->seat.pointer.entered_surface));
+
+          if (pointer_resource)
+            wl_pointer_send_leave (pointer_resource, serial,
+                                   priv->seat.pointer.entered_surface);
+        }
+
+      if (topmost_surface)
+        {
+          pointer_resource = wl_resource_find_for_client (&priv->seat.pointer.resource_list,
+                                                          wl_resource_get_client (topmost_surface));
+
+          if (pointer_resource)
+            wl_pointer_send_enter (pointer_resource, serial,
+                                   topmost_surface,
+                                   wl_fixed_from_double (priv->seat.pointer.last_x),
+                                   wl_fixed_from_double (priv->seat.pointer.last_y));
+        }
+
+      priv->seat.pointer.entered_surface = topmost_surface;
+    }
 }
 
 static gboolean
 wakefield_compositor_enter_notify_event (GtkWidget        *widget,
                                          GdkEventCrossing *event)
 {
-#if 0
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
 
-  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
-    {
-      wl_pointer_send_enter (resource, serial,
-                             priv->surface->resource,
-                             wl_fixed_from_int (event->x),
-                             wl_fixed_from_int (event->y));
-    }
-#endif
+  priv->seat.pointer.entered_compositor = TRUE;
+  priv->seat.pointer.last_x = event->x;
+  priv->seat.pointer.last_y = event->y;
+
+  wakefield_compositor_send_enter_leave (compositor);
 
   return FALSE;
 }
@@ -290,17 +352,12 @@ static gboolean
 wakefield_compositor_leave_notify_event (GtkWidget        *widget,
                                          GdkEventCrossing *event)
 {
-#if 0
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
 
-  wl_resource_for_each (resource, &priv->seat.pointer.resource_list)
-    {
-      wl_pointer_send_leave (resource, serial, priv->surface->resource);
-    }
-#endif
+  priv->seat.pointer.entered_compositor = FALSE;
+
+  wakefield_compositor_send_enter_leave (compositor);
 
   return FALSE;
 }
@@ -508,6 +565,15 @@ wl_compositor_create_region (struct wl_client *client,
   region->region = cairo_region_create ();
 }
 
+void
+wakefield_compositor_surface_destroyed (WakefieldCompositor *compositor,
+                                        struct wl_resource  *surface)
+{
+  gtk_widget_queue_draw (GTK_WIDGET (compositor));
+
+  wakefield_compositor_send_enter_leave (compositor);
+}
+
 static void
 wl_compositor_create_surface (struct wl_client *client,
                               struct wl_resource *compositor_resource,
@@ -563,6 +629,8 @@ xdg_get_xdg_surface (struct wl_client *client,
 
   output_resource = wl_resource_find_for_client (&priv->output.resource_list, client);
   wl_surface_send_enter (surface_resource, output_resource);
+
+  wakefield_compositor_send_enter_leave (compositor);
 }
 
 static void

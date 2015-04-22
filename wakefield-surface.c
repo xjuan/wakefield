@@ -293,15 +293,15 @@ wl_surface_finalize (struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
 
-  gtk_widget_queue_draw (GTK_WIDGET (surface->compositor));
-
-  destroy_pending_state (&surface->pending);
-  destroy_pending_state (&surface->current);
-
   if (surface->xdg_surface)
     surface->xdg_surface->surface = NULL;
 
   wl_list_remove (wl_resource_get_link (resource));
+
+  wakefield_compositor_surface_destroyed (surface->compositor, surface->resource);
+
+  destroy_pending_state (&surface->pending);
+  destroy_pending_state (&surface->current);
 
   g_slice_free (struct WakefieldSurface, surface);
 }

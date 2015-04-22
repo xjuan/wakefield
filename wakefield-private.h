@@ -26,6 +26,8 @@
 #include <wayland-server.h>
 
 struct wl_display *wakefield_compositor_get_display (WakefieldCompositor *compositor);
+void               wakefield_compositor_surface_destroyed (WakefieldCompositor *compositor,
+                                                           struct wl_resource  *surface);
 
 struct wl_resource *wakefield_surface_new  (WakefieldCompositor *compositor,
                                             struct wl_client    *client,
