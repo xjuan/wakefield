@@ -55,6 +55,7 @@ struct WakefieldRegion
 struct _WakefieldCompositorPrivate
 {
   GdkWindow *event_window;
+  GSource *wayland_source;
   struct wl_display *wl_display;
 
   struct wl_list surfaces;
@@ -664,13 +665,30 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
   wl_display_add_socket_auto (priv->wl_display);
 
   /* Attach the wl_event_loop to ours */
-  g_source_attach (wayland_event_source_new (priv->wl_display), NULL);
+  priv->wayland_source = wayland_event_source_new (priv->wl_display);
+  g_source_attach (priv->wayland_source, NULL);
 }
+
+static void
+wakefield_compositor_finalize (GObject *object)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (object);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  g_source_destroy (priv->wayland_source);
+  wl_display_destroy (priv->wl_display);
+
+  G_OBJECT_CLASS (wakefield_compositor_parent_class)->finalize (object);
+}
+
 
 static void
 wakefield_compositor_class_init (WakefieldCompositorClass *klass)
 {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+  GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
+
+  gobject_class->finalize = wakefield_compositor_finalize;
 
   widget_class->realize = wakefield_compositor_realize;
   widget_class->unrealize = wakefield_compositor_unrealize;
