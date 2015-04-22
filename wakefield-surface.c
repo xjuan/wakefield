@@ -41,6 +41,7 @@ struct WakefieldSurface
   struct wl_resource *resource;
 
   struct WakefieldXdgSurface *xdg_surface;
+  struct WakefieldXdgPopup *xdg_popup;
 
   cairo_region_t *damage;
   struct WakefieldSurfacePendingState pending, current;
@@ -49,6 +50,19 @@ struct WakefieldSurface
 struct WakefieldXdgSurface
 {
   struct WakefieldSurface *surface;
+
+  struct wl_resource *resource;
+};
+
+struct WakefieldXdgPopup
+{
+  struct WakefieldSurface *surface;
+
+  struct WakefieldSurface *parent_surface;
+
+  GtkWidget *toplevel;
+  GtkWidget *drawing_area;
+  int x, y;
 
   struct wl_resource *resource;
 };
@@ -123,8 +137,8 @@ wakefield_surface_draw (struct wl_resource *surface_resource,
 }
 
 static void
-resource_release (struct wl_client *client,
-                  struct wl_resource *resource)
+wl_surface_destroy (struct wl_client *client,
+                    struct wl_resource *resource)
 {
   wl_resource_destroy (resource);
 }
@@ -202,6 +216,7 @@ wl_surface_commit (struct wl_client *client,
   struct wl_shm_buffer *shm_buffer;
   cairo_region_t *clear_region = NULL;
   cairo_rectangle_int_t rect = { 0, };
+  int new_width = 0, new_height = 0;
 
   if (surface->current.buffer)
     {
@@ -219,10 +234,12 @@ wl_surface_commit (struct wl_client *client,
   if (surface->pending.buffer)
     {
       shm_buffer = wl_shm_buffer_get (surface->pending.buffer);
+      new_width = wl_shm_buffer_get_width (shm_buffer) / surface->pending.scale;
+      new_height = wl_shm_buffer_get_height (shm_buffer) / surface->pending.scale;
       if (clear_region && shm_buffer)
         {
-          rect.width = wl_shm_buffer_get_width (shm_buffer) / surface->pending.scale;
-          rect.height = wl_shm_buffer_get_height (shm_buffer) / surface->pending.scale;
+          rect.width = new_width;
+          rect.height = new_height;
 
           cairo_region_subtract_rectangle (clear_region, &rect);
         }
@@ -245,7 +262,32 @@ wl_surface_commit (struct wl_client *client,
     }
 
   /* process damage */
-  gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
+
+  if (surface->xdg_surface)
+    gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
+  else if (surface->xdg_popup && new_width > 0 && new_height > 0)
+    {
+      struct WakefieldXdgPopup *xdg_popup = surface->xdg_popup;
+      GtkAllocation allocation;
+      WakefieldCompositor *compositor = xdg_popup->surface->compositor;
+      gint root_x, root_y;
+
+      gtk_widget_get_allocation (GTK_WIDGET (compositor), &allocation);
+
+      gtk_widget_set_size_request (GTK_WIDGET (xdg_popup->drawing_area), new_width, new_height);
+
+      if (!gtk_widget_get_mapped (xdg_popup->toplevel))
+        {
+          gdk_window_get_root_coords (gtk_widget_get_window (GTK_WIDGET (compositor)),
+                                      allocation.x, allocation.y, &root_x, &root_y);
+
+          gtk_window_move (GTK_WINDOW (xdg_popup->toplevel),
+                           root_x + xdg_popup->x, root_y + xdg_popup->y);
+          gtk_widget_show (xdg_popup->toplevel);
+        }
+
+      gtk_widget_queue_draw_region (GTK_WIDGET (xdg_popup->drawing_area), surface->damage);
+    }
 
   /* ... and then empty it */
   {
@@ -294,6 +336,9 @@ wl_surface_finalize (struct wl_resource *resource)
   if (surface->xdg_surface)
     surface->xdg_surface->surface = NULL;
 
+  if (surface->xdg_popup)
+    surface->xdg_popup->surface = NULL;
+
   wl_list_remove (wl_resource_get_link (resource));
 
   wakefield_compositor_surface_destroyed (surface->compositor, surface->resource);
@@ -305,7 +350,7 @@ wl_surface_finalize (struct wl_resource *resource)
 }
 
 static const struct wl_surface_interface surface_implementation = {
-  resource_release,
+  wl_surface_destroy,
   wl_surface_attach,
   wl_surface_damage,
   wl_surface_frame,
@@ -497,4 +542,85 @@ wakefield_xdg_surface_new (struct wl_client *client,
   wl_resource_set_implementation (xdg_surface->resource, &xdg_surface_implementation, xdg_surface, xdg_surface_finalize);
 
   return xdg_surface->resource;
+}
+
+static void
+xdg_popup_destroy (struct wl_client *client,
+                   struct wl_resource *resource)
+{
+  wl_resource_destroy (resource);
+}
+
+static const struct xdg_popup_interface xdg_popup_implementation = {
+  xdg_popup_destroy,
+};
+
+static void
+xdg_popup_finalize (struct wl_resource *xdg_popup_resource)
+{
+  struct WakefieldXdgPopup *xdg_popup = wl_resource_get_user_data (xdg_popup_resource);
+
+  wl_list_remove (wl_resource_get_link (xdg_popup_resource));
+
+  if (xdg_popup->surface)
+    xdg_popup->surface->xdg_popup = NULL;
+
+  gtk_widget_destroy (xdg_popup->toplevel);
+
+  g_slice_free (struct WakefieldXdgPopup, xdg_popup);
+}
+
+static gboolean
+xdg_popup_draw (GtkWidget *widget,
+                cairo_t   *cr,
+                struct WakefieldXdgPopup *xdg_popup)
+{
+  if (xdg_popup->surface)
+    wakefield_surface_draw (xdg_popup->surface->resource, cr);
+  return TRUE;
+}
+
+
+struct wl_resource *
+wakefield_xdg_popup_new (WakefieldCompositor *compositor,
+                         struct wl_client   *client,
+                         struct wl_resource *shell_resource,
+                         uint32_t            id,
+                         struct wl_resource *surface_resource,
+                         struct wl_resource *parent_resource,
+                         gint32 x, gint32 y)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  struct WakefieldSurface *parent_surface = wl_resource_get_user_data (parent_resource);
+  struct WakefieldXdgPopup *xdg_popup;
+
+  if (parent_surface == NULL ||
+      (parent_surface->xdg_popup == NULL &&
+       parent_surface->xdg_surface == NULL))
+    {
+      wl_resource_post_error (shell_resource,
+                              XDG_POPUP_ERROR_INVALID_PARENT,
+                              "xdg_popup parent was invalid");
+      return NULL;
+    }
+
+  xdg_popup = g_slice_new0 (struct WakefieldXdgPopup);
+  xdg_popup->surface = surface;
+  xdg_popup->parent_surface = parent_surface;
+  xdg_popup->toplevel = gtk_window_new (GTK_WINDOW_POPUP);
+  xdg_popup->drawing_area = gtk_drawing_area_new ();
+  gtk_container_add (GTK_CONTAINER (xdg_popup->toplevel), xdg_popup->drawing_area);
+  gtk_widget_show (xdg_popup->drawing_area);
+  xdg_popup->x = x;
+  xdg_popup->y = y;
+
+  g_signal_connect (xdg_popup->drawing_area, "draw", G_CALLBACK (xdg_popup_draw),
+                    xdg_popup);
+
+  surface->xdg_popup = xdg_popup;
+
+  xdg_popup->resource = wl_resource_create (client, &xdg_popup_interface, wl_resource_get_version (shell_resource), id);
+  wl_resource_set_implementation (xdg_popup->resource, &xdg_popup_implementation, xdg_popup, xdg_popup_finalize);
+
+  return xdg_popup->resource;
 }

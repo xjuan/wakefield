@@ -43,6 +43,15 @@ struct wl_resource *wakefield_xdg_surface_new (struct wl_client   *client,
 
 struct wl_resource *wakefield_xdg_surface_get_surface (struct wl_resource *xdg_surface_resource);
 
+struct wl_resource *wakefield_xdg_popup_new (WakefieldCompositor *compositor,
+                                             struct wl_client   *client,
+                                             struct wl_resource *shell_resource,
+                                             uint32_t            id,
+                                             struct wl_resource *surface_resource,
+                                             struct wl_resource *parent_resource,
+                                             gint32 x, gint32 y);
+
+
 cairo_region_t *wakefield_region_get_region (struct wl_resource *region_resource);
 
 struct WakefieldDataDevice *wakefield_data_device_new (WakefieldCompositor *compositor);

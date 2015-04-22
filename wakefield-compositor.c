@@ -69,6 +69,7 @@ struct _WakefieldCompositorPrivate
 
   struct wl_list surfaces;
   struct wl_list xdg_surfaces;
+  struct wl_list xdg_popups;
   struct wl_list shell_resources;
   struct WakefieldSeat seat;
   struct WakefieldOutput output;
@@ -731,7 +732,7 @@ xdg_get_xdg_surface (struct wl_client *client,
 
 static void
 xdg_get_xdg_popup (struct wl_client *client,
-                   struct wl_resource *resource,
+                   struct wl_resource *shell_resource,
                    uint32_t id,
                    struct wl_resource *surface_resource,
                    struct wl_resource *parent_resource,
@@ -739,8 +740,18 @@ xdg_get_xdg_popup (struct wl_client *client,
                    uint32_t serial,
                    int32_t x, int32_t y)
 {
-  wl_resource_post_error (resource, 1,
-                          "xdg-shell:: get_popup not implemented yet.");
+  WakefieldCompositor *compositor = wl_resource_get_user_data (shell_resource);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_popup, *output_resource;
+
+  xdg_popup = wakefield_xdg_popup_new (compositor, client, shell_resource, id, surface_resource, parent_resource, x, y);
+  if (xdg_popup)
+    {
+      wl_list_insert (&priv->xdg_popups, wl_resource_get_link (xdg_popup));
+
+      output_resource = wl_resource_find_for_client (&priv->output.resource_list, client);
+      wl_surface_send_enter (surface_resource, output_resource);
+    }
 }
 
 static void
@@ -822,6 +833,7 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
 
   wl_list_init (&priv->surfaces);
   wl_list_init (&priv->xdg_surfaces);
+  wl_list_init (&priv->xdg_popups);
 
   socketpair (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds);
 
