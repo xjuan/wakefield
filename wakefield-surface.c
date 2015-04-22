@@ -21,7 +21,10 @@
  *     Alexander Larsson <alexl@redhat.com>
  */
 
+#include <sys/time.h>
+
 #include "wakefield-private.h"
+#include "xdg-shell-server-protocol.h"
 
 struct WakefieldSurfacePendingState
 {
@@ -34,13 +37,20 @@ struct WakefieldSurfacePendingState
 
 struct WakefieldSurface
 {
+  WakefieldCompositor *compositor;
   struct wl_resource *resource;
+
+  struct wl_resource *xdg_resource;
 
   cairo_region_t *damage;
   struct WakefieldSurfacePendingState pending, current;
 };
 
-#if 0
+struct WakefieldXdgSurface
+{
+  struct WakefieldSurface *surface;
+};
+
 static cairo_format_t
 cairo_format_for_wl_shm_format (enum wl_shm_format format)
 {
@@ -63,10 +73,12 @@ get_time (void)
   return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-static void
-draw_surface (cairo_t                 *cr,
-              struct WakefieldSurface *surface)
+/* Note: This supports both regular and xdg surface resources */
+void
+wakefield_surface_draw (struct wl_resource *some_surface_resource,
+                        cairo_t                 *cr)
 {
+  struct WakefieldSurface *surface = wl_resource_get_user_data (some_surface_resource);
   struct wl_shm_buffer *shm_buffer;
 
   shm_buffer = wl_shm_buffer_get (surface->current.buffer);
@@ -110,7 +122,6 @@ draw_surface (cairo_t                 *cr,
     wl_list_init (&surface->current.frame_callbacks);
   }
 }
-#endif
 
 static void
 resource_release (struct wl_client *client,
@@ -235,7 +246,7 @@ wl_surface_commit (struct wl_client *client,
     }
 
   /* process damage */
-  //  gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
+  gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
 
   /* ... and then empty it */
   {
@@ -281,7 +292,7 @@ wl_surface_destructor (struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
 
-  //gtk_widget_queue_draw (GTK_WIDGET (surface->compositor));
+  gtk_widget_queue_draw (GTK_WIDGET (surface->compositor));
 
   destroy_pending_state (&surface->pending);
   destroy_pending_state (&surface->current);
@@ -291,7 +302,7 @@ wl_surface_destructor (struct wl_resource *resource)
   g_slice_free (struct WakefieldSurface, surface);
 }
 
-static const struct wl_surface_interface surface_interface = {
+static const struct wl_surface_interface surface_implementation = {
   resource_release,
   wl_surface_attach,
   wl_surface_damage,
@@ -304,17 +315,19 @@ static const struct wl_surface_interface surface_interface = {
 };
 
 struct wl_resource *
-wakefield_surface_new (struct wl_client *client,
+wakefield_surface_new (WakefieldCompositor *compositor,
+                       struct wl_client *client,
                        struct wl_resource *compositor_resource,
                        uint32_t id)
 {
   struct WakefieldSurface *surface;
 
   surface = g_slice_new0 (struct WakefieldSurface);
+  surface->compositor = compositor;
   surface->damage = cairo_region_create ();
 
   surface->resource = wl_resource_create (client, &wl_surface_interface, wl_resource_get_version (compositor_resource), id);
-  wl_resource_set_implementation (surface->resource, &surface_interface, surface, wl_surface_destructor);
+  wl_resource_set_implementation (surface->resource, &surface_implementation, surface, wl_surface_destructor);
 
   wl_list_init (&surface->pending.frame_callbacks);
   wl_list_init (&surface->current.frame_callbacks);
@@ -323,4 +336,144 @@ wakefield_surface_new (struct wl_client *client,
   surface->pending.scale = 1;
 
   return surface->resource;
+}
+
+static void
+wl_xdg_surface_destructor (struct wl_resource *resource)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
+
+  g_assert (surface->xdg_resource == resource);
+
+  wl_list_remove (wl_resource_get_link (resource));
+  surface->xdg_resource = NULL;
+}
+
+static void
+xdg_surface_destroy (struct wl_client *client,
+                     struct wl_resource *resource)
+{
+  wl_resource_destroy (resource);
+}
+
+static void
+xdg_surface_set_parent (struct wl_client *client,
+                        struct wl_resource *resource,
+                        struct wl_resource *parent_resource)
+{
+}
+
+static void
+xdg_surface_set_app_id (struct wl_client *client,
+                        struct wl_resource *resource,
+                        const char *app_id)
+{
+}
+
+static void
+xdg_surface_show_window_menu (struct wl_client *client,
+                              struct wl_resource *surface_resource,
+                              struct wl_resource *seat_resource,
+                              uint32_t serial,
+                              int32_t x,
+                              int32_t y)
+{
+}
+
+static void
+xdg_surface_set_title (struct wl_client *client,
+                       struct wl_resource *resource, const char *title)
+{
+}
+
+static void
+xdg_surface_move (struct wl_client *client, struct wl_resource *resource,
+                  struct wl_resource *seat_resource, uint32_t serial)
+{
+}
+
+static void
+xdg_surface_resize (struct wl_client *client, struct wl_resource *resource,
+                    struct wl_resource *seat_resource, uint32_t serial,
+                    uint32_t edges)
+{
+}
+
+static void
+xdg_surface_ack_configure (struct wl_client *client,
+                           struct wl_resource *resource,
+                           uint32_t serial)
+{
+}
+
+static void
+xdg_surface_set_window_geometry (struct wl_client *client,
+                                 struct wl_resource *resource,
+                                 int32_t x,
+                                 int32_t y,
+                                 int32_t width,
+                                 int32_t height)
+{
+}
+
+static void
+xdg_surface_set_maximized (struct wl_client *client,
+                           struct wl_resource *resource)
+{
+}
+
+static void
+xdg_surface_unset_maximized (struct wl_client *client,
+                             struct wl_resource *resource)
+{
+}
+
+static void
+xdg_surface_set_fullscreen (struct wl_client *client,
+                            struct wl_resource *resource,
+                            struct wl_resource *output_resource)
+{
+}
+
+static void
+xdg_surface_unset_fullscreen (struct wl_client *client,
+                              struct wl_resource *resource)
+{
+}
+
+static void
+xdg_surface_set_minimized (struct wl_client *client,
+                           struct wl_resource *resource)
+{
+}
+
+static const struct xdg_surface_interface xdg_surface_implementation = {
+  xdg_surface_destroy,
+  xdg_surface_set_parent,
+  xdg_surface_set_title,
+  xdg_surface_set_app_id,
+  xdg_surface_show_window_menu,
+  xdg_surface_move,
+  xdg_surface_resize,
+  xdg_surface_ack_configure,
+  xdg_surface_set_window_geometry,
+  xdg_surface_set_maximized,
+  xdg_surface_unset_maximized,
+  xdg_surface_set_fullscreen,
+  xdg_surface_unset_fullscreen,
+  xdg_surface_set_minimized,
+};
+
+struct wl_resource *
+wakefield_xdg_surface_new (struct wl_client *client,
+                           struct wl_resource *shell_resource,
+                           uint32_t id,
+                           struct wl_resource *surface_resource)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+
+  surface->xdg_resource = wl_resource_create (client, &xdg_surface_interface, wl_resource_get_version (shell_resource), id);
+  wl_resource_set_implementation (surface->xdg_resource, &xdg_surface_implementation, surface, wl_xdg_surface_destructor);
+
+  return surface->xdg_resource;
 }

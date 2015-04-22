@@ -35,11 +35,6 @@ struct WakefieldPointer
   struct wl_resource *cursor_surface;
 };
 
-struct WakefieldShell
-{
-  struct wl_list resource_list;
-};
-
 struct WakefieldOutput
 {
   struct wl_list resource_list;
@@ -63,8 +58,9 @@ struct _WakefieldCompositorPrivate
   struct wl_display *wl_display;
 
   struct wl_list surfaces;
+  struct wl_list xdg_surfaces;
+  struct wl_list shell_resources;
   struct WakefieldSeat seat;
-  struct WakefieldShell shell;
   struct WakefieldOutput output;
 };
 typedef struct _WakefieldCompositorPrivate WakefieldCompositorPrivate;
@@ -176,14 +172,14 @@ static gboolean
 wakefield_compositor_draw (GtkWidget *widget,
                            cairo_t   *cr)
 {
-#if 0
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface_resource;
 
-  if (priv->surface)
-    draw_surface (cr, priv->surface);
-
-#endif
+  wl_resource_for_each (xdg_surface_resource, &priv->xdg_surfaces)
+    {
+      wakefield_surface_draw (xdg_surface_resource, cr);
+    }
 
   return TRUE;
 }
@@ -517,7 +513,7 @@ wl_compositor_create_surface (struct wl_client *client,
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct wl_resource *surface;
 
-  surface = wakefield_surface_new (client, compositor_resource, id);
+  surface = wakefield_surface_new (compositor, client, compositor_resource, id);
   wl_list_insert (&priv->surfaces, wl_resource_get_link (surface));
 }
 
@@ -550,12 +546,16 @@ xdg_use_unstable_version (struct wl_client *client,
 
 static void
 xdg_get_xdg_surface (struct wl_client *client,
-                     struct wl_resource *resource,
+                     struct wl_resource *shell_resource,
                      uint32_t id,
                      struct wl_resource *surface_resource)
 {
-  wl_resource_post_error (resource, 1,
-                          "xdg-shell:: get_surface not implemented yet.");
+  struct wl_resource *xdg_surface;
+  WakefieldCompositor *compositor = wl_resource_get_user_data (shell_resource);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  xdg_surface = wakefield_xdg_surface_new (client, shell_resource, id, surface_resource);
+  wl_list_insert (priv->xdg_surfaces.prev, wl_resource_get_link (xdg_surface));
 }
 
 static void
@@ -596,12 +596,11 @@ bind_xdg_shell(struct wl_client *client, void *data, uint32_t version, uint32_t 
 {
   WakefieldCompositor *compositor = data;
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct WakefieldShell *shell = &priv->shell;
   struct wl_resource *cr;
 
   cr = wl_resource_create (client,  &xdg_shell_interface, XDG_SHELL_VERSION, id);
-  wl_resource_set_implementation (cr, &xdg_implementation, shell, unbind_resource);
-  wl_list_insert (&shell->resource_list, wl_resource_get_link (cr));
+  wl_resource_set_implementation (cr, &xdg_implementation, compositor, unbind_resource);
+  wl_list_insert (&priv->shell_resources, wl_resource_get_link (cr));
 }
 
 static void
@@ -635,12 +634,13 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
 
   wl_global_create (priv->wl_display, &xdg_shell_interface,
                     XDG_SHELL_VERSION, compositor, bind_xdg_shell);
-  wl_list_init (&priv->shell.resource_list);
+  wl_list_init (&priv->shell_resources);
 
   wakefield_seat_init (&priv->seat, priv->wl_display);
   wakefield_output_init (compositor);
 
   wl_list_init (&priv->surfaces);
+  wl_list_init (&priv->xdg_surfaces);
 
   socketpair (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds);
 
