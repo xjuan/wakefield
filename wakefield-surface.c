@@ -105,8 +105,6 @@ wakefield_surface_draw (struct wl_resource *surface_resource,
 
       wl_shm_buffer_end_access (shm_buffer);
     }
-  else
-    g_assert_not_reached ();
 
   /* Trigger frame callbacks. */
   {
