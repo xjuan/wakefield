@@ -62,6 +62,7 @@ struct _WakefieldCompositorPrivate
   struct wl_list shell_resources;
   struct WakefieldSeat seat;
   struct WakefieldOutput output;
+  struct WakefieldDataDevice *data_device;
 };
 typedef struct _WakefieldCompositorPrivate WakefieldCompositorPrivate;
 
@@ -618,6 +619,14 @@ bind_compositor (struct wl_client *client,
 
 #define WL_COMPOSITOR_VERSION 3
 
+struct wl_display *
+wakefield_compositor_get_display (WakefieldCompositor *compositor)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  return priv->wl_display;
+}
+
 static void
 wakefield_compositor_init (WakefieldCompositor *compositor)
 {
@@ -635,6 +644,8 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
   wl_global_create (priv->wl_display, &xdg_shell_interface,
                     XDG_SHELL_VERSION, compositor, bind_xdg_shell);
   wl_list_init (&priv->shell_resources);
+
+  priv->data_device = wakefield_data_device_new (compositor);
 
   wakefield_seat_init (&priv->seat, priv->wl_display);
   wakefield_output_init (compositor);
