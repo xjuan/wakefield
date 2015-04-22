@@ -171,8 +171,6 @@ bind_data_device_manager (struct wl_client *client,
   struct WakefieldDataDevice *data_device = data;
   struct wl_resource *manager_resource;
 
-  g_print ("bind_data_device_manager v=%d id=%d\n", version, id);
-
   manager_resource = wl_resource_create (client, &wl_data_device_manager_interface, version, id);
   if (manager_resource == NULL)
     {

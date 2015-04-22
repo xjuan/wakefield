@@ -179,7 +179,9 @@ wakefield_compositor_draw (GtkWidget *widget,
 
   wl_resource_for_each (xdg_surface_resource, &priv->xdg_surfaces)
     {
-      wakefield_surface_draw (xdg_surface_resource, cr);
+      struct wl_resource *surface_resource = wakefield_xdg_surface_get_surface (xdg_surface_resource);
+      if (surface_resource)
+        wakefield_surface_draw (surface_resource, cr);
     }
 
   return TRUE;

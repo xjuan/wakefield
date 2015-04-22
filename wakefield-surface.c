@@ -40,7 +40,7 @@ struct WakefieldSurface
   WakefieldCompositor *compositor;
   struct wl_resource *resource;
 
-  struct wl_resource *xdg_resource;
+  struct WakefieldXdgSurface *xdg_surface;
 
   cairo_region_t *damage;
   struct WakefieldSurfacePendingState pending, current;
@@ -49,6 +49,8 @@ struct WakefieldSurface
 struct WakefieldXdgSurface
 {
   struct WakefieldSurface *surface;
+
+  struct wl_resource *resource;
 };
 
 static cairo_format_t
@@ -73,12 +75,11 @@ get_time (void)
   return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-/* Note: This supports both regular and xdg surface resources */
 void
-wakefield_surface_draw (struct wl_resource *some_surface_resource,
+wakefield_surface_draw (struct wl_resource *surface_resource,
                         cairo_t                 *cr)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (some_surface_resource);
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   struct wl_shm_buffer *shm_buffer;
 
   shm_buffer = wl_shm_buffer_get (surface->current.buffer);
@@ -288,7 +289,7 @@ destroy_pending_state (struct WakefieldSurfacePendingState *state)
 }
 
 static void
-wl_surface_destructor (struct wl_resource *resource)
+wl_surface_finalize (struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
 
@@ -296,6 +297,9 @@ wl_surface_destructor (struct wl_resource *resource)
 
   destroy_pending_state (&surface->pending);
   destroy_pending_state (&surface->current);
+
+  if (surface->xdg_surface)
+    surface->xdg_surface->surface = NULL;
 
   wl_list_remove (wl_resource_get_link (resource));
 
@@ -327,7 +331,7 @@ wakefield_surface_new (WakefieldCompositor *compositor,
   surface->damage = cairo_region_create ();
 
   surface->resource = wl_resource_create (client, &wl_surface_interface, wl_resource_get_version (compositor_resource), id);
-  wl_resource_set_implementation (surface->resource, &surface_implementation, surface, wl_surface_destructor);
+  wl_resource_set_implementation (surface->resource, &surface_implementation, surface, wl_surface_finalize);
 
   wl_list_init (&surface->pending.frame_callbacks);
   wl_list_init (&surface->current.frame_callbacks);
@@ -339,14 +343,16 @@ wakefield_surface_new (WakefieldCompositor *compositor,
 }
 
 static void
-wl_xdg_surface_destructor (struct wl_resource *resource)
+xdg_surface_finalize (struct wl_resource *xdg_resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
+  struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_resource);
 
-  g_assert (surface->xdg_resource == resource);
+  wl_list_remove (wl_resource_get_link (xdg_resource));
 
-  wl_list_remove (wl_resource_get_link (resource));
-  surface->xdg_resource = NULL;
+  if (xdg_surface->surface)
+    xdg_surface->surface->xdg_surface = NULL;
+
+  g_slice_free (struct WakefieldXdgSurface, xdg_surface);
 }
 
 static void
@@ -465,15 +471,32 @@ static const struct xdg_surface_interface xdg_surface_implementation = {
 };
 
 struct wl_resource *
+wakefield_xdg_surface_get_surface (struct wl_resource *xdg_surface_resource)
+{
+  struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_surface_resource);
+
+  if (xdg_surface->surface)
+    return xdg_surface->surface->resource;
+
+  return NULL;
+}
+
+struct wl_resource *
 wakefield_xdg_surface_new (struct wl_client *client,
                            struct wl_resource *shell_resource,
                            uint32_t id,
                            struct wl_resource *surface_resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  struct WakefieldXdgSurface *xdg_surface;
 
-  surface->xdg_resource = wl_resource_create (client, &xdg_surface_interface, wl_resource_get_version (shell_resource), id);
-  wl_resource_set_implementation (surface->xdg_resource, &xdg_surface_implementation, surface, wl_xdg_surface_destructor);
+  xdg_surface = g_slice_new0 (struct WakefieldXdgSurface);
+  xdg_surface->surface = surface;
 
-  return surface->xdg_resource;
+  surface->xdg_surface = xdg_surface;
+
+  xdg_surface->resource = wl_resource_create (client, &xdg_surface_interface, wl_resource_get_version (shell_resource), id);
+  wl_resource_set_implementation (xdg_surface->resource, &xdg_surface_implementation, xdg_surface, xdg_surface_finalize);
+
+  return xdg_surface->resource;
 }
