@@ -163,11 +163,49 @@ wakefield_compositor_unmap (GtkWidget *widget)
 }
 
 static void
+refresh_output (WakefieldCompositor *compositor,
+                struct wl_resource *output)
+{
+  GtkAllocation allocation;
+
+  gtk_widget_get_allocation (GTK_WIDGET (compositor), &allocation);
+
+  wl_output_send_scale (output, gtk_widget_get_scale_factor (GTK_WIDGET (compositor)));
+  wl_output_send_mode (output,
+                       WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED,
+                       allocation.width,
+                       allocation.height,
+                       60);
+  wl_output_send_done (output);
+}
+
+static void
+send_xdg_configure_request (WakefieldCompositor *compositor,
+                            struct wl_resource *xdg_surface)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  GtkAllocation allocation;
+  struct wl_array states;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+  uint32_t *s;
+
+  gtk_widget_get_allocation (GTK_WIDGET (compositor), &allocation);
+
+  wl_array_init(&states);
+  s = wl_array_add(&states, sizeof *s);
+  *s = XDG_SURFACE_STATE_FULLSCREEN;
+  xdg_surface_send_configure (xdg_surface, allocation.width, allocation.height,
+                              &states, serial);
+  wl_array_release(&states);
+}
+
+static void
 wakefield_compositor_size_allocate (GtkWidget *widget,
                                     GtkAllocation *allocation)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface_resource, *output;
 
   gtk_widget_set_allocation (widget, allocation);
 
@@ -177,6 +215,16 @@ wakefield_compositor_size_allocate (GtkWidget *widget,
                             allocation->y,
                             allocation->width,
                             allocation->height);
+
+  wl_resource_for_each (output, &priv->output.resource_list)
+    {
+      refresh_output (compositor, output);
+    }
+
+  wl_resource_for_each (xdg_surface_resource, &priv->xdg_surfaces)
+    {
+      send_xdg_configure_request (compositor, xdg_surface_resource);
+    }
 }
 
 static gboolean
@@ -450,23 +498,6 @@ wakefield_seat_init (struct WakefieldSeat *seat,
 }
 
 static void
-refresh_output (WakefieldCompositor *compositor,
-                struct wl_resource *cr)
-{
-  GtkAllocation allocation;
-
-  gtk_widget_get_allocation (GTK_WIDGET (compositor), &allocation);
-
-  wl_output_send_scale (cr, gtk_widget_get_scale_factor (GTK_WIDGET (compositor)));
-  wl_output_send_mode (cr,
-                       WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED,
-                       allocation.width,
-                       allocation.height,
-                       60);
-  wl_output_send_done (cr);
-}
-
-static void
 bind_output (struct wl_client *client,
              void *data,
              uint32_t version,
@@ -629,6 +660,8 @@ xdg_get_xdg_surface (struct wl_client *client,
 
   output_resource = wl_resource_find_for_client (&priv->output.resource_list, client);
   wl_surface_send_enter (surface_resource, output_resource);
+
+  send_xdg_configure_request (compositor, xdg_surface);
 
   wakefield_compositor_send_enter_leave (compositor);
 }
