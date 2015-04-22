@@ -7,3 +7,5 @@
 test-compositor
 test-client
 test-client-2
+xdg-shell-protocol.c
+xdg-shell-server-protocol.h
