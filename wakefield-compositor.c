@@ -299,6 +299,69 @@ wakefield_compositor_button_release_event (GtkWidget      *widget,
 }
 
 static gboolean
+wakefield_compositor_scroll_event (GtkWidget      *widget,
+                                   GdkEventScroll *event)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *pointer_resource;
+
+  if (priv->seat.pointer.entered_surface == NULL)
+    return TRUE;
+
+  pointer_resource = wl_resource_find_for_client (&priv->seat.pointer.resource_list,
+                                                  wl_resource_get_client (priv->seat.pointer.entered_surface));
+  if (pointer_resource)
+    {
+      switch (event->direction)
+        {
+        case GDK_SCROLL_SMOOTH:
+          if (event->delta_x != 0)
+            {
+              wl_pointer_send_axis (pointer_resource,
+                                    event->time,
+                                    WL_POINTER_AXIS_HORIZONTAL_SCROLL,
+                                    wl_fixed_from_double (event->delta_x * 10.0));
+            }
+          if (event->delta_y != 0)
+            {
+              wl_pointer_send_axis (pointer_resource,
+                                    event->time,
+                                    WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                    wl_fixed_from_double (event->delta_y * 10.0));
+            }
+          break;
+        case GDK_SCROLL_UP:
+          wl_pointer_send_axis (pointer_resource,
+                                event->time,
+                                WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                wl_fixed_from_int (-10.0));
+          break;
+        case GDK_SCROLL_DOWN:
+          wl_pointer_send_axis (pointer_resource,
+                                event->time,
+                                WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                wl_fixed_from_int (10.0));
+          break;
+        case GDK_SCROLL_LEFT:
+          wl_pointer_send_axis (pointer_resource,
+                                event->time,
+                                WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                wl_fixed_from_int (-10.0));
+          break;
+        case GDK_SCROLL_RIGHT:
+          wl_pointer_send_axis (pointer_resource,
+                                event->time,
+                                WL_POINTER_AXIS_VERTICAL_SCROLL,
+                                wl_fixed_from_int (10.0));
+          break;
+        }
+    }
+
+  return TRUE;
+}
+
+static gboolean
 wakefield_compositor_motion_notify_event (GtkWidget      *widget,
                                           GdkEventMotion *event)
 {
@@ -799,6 +862,7 @@ wakefield_compositor_class_init (WakefieldCompositorClass *klass)
   widget_class->draw = wakefield_compositor_draw;
   widget_class->enter_notify_event = wakefield_compositor_enter_notify_event;
   widget_class->leave_notify_event = wakefield_compositor_leave_notify_event;
+  widget_class->scroll_event = wakefield_compositor_scroll_event;
   widget_class->button_press_event = wakefield_compositor_button_press_event;
   widget_class->button_release_event = wakefield_compositor_button_release_event;
   widget_class->motion_notify_event = wakefield_compositor_motion_notify_event;
