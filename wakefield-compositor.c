@@ -553,12 +553,15 @@ xdg_get_xdg_surface (struct wl_client *client,
                      uint32_t id,
                      struct wl_resource *surface_resource)
 {
-  struct wl_resource *xdg_surface;
+  struct wl_resource *xdg_surface, *output_resource;
   WakefieldCompositor *compositor = wl_resource_get_user_data (shell_resource);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
 
   xdg_surface = wakefield_xdg_surface_new (client, shell_resource, id, surface_resource);
   wl_list_insert (priv->xdg_surfaces.prev, wl_resource_get_link (xdg_surface));
+
+  output_resource = wl_resource_find_for_client (&priv->output.resource_list, client);
+  wl_surface_send_enter (surface_resource, output_resource);
 }
 
 static void
