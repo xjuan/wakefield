@@ -39,6 +39,17 @@ struct WakefieldPointer
   struct wl_list resource_list;
   struct wl_resource *cursor_surface;
 
+  guint32 button_count;
+
+  struct wl_client *grab_client;
+  guint32 grab_button;
+  GdkDevice *grab_device;
+  gboolean grab_is_popup;
+  guint32 grab_time;
+  guint32 grab_serial;
+  double grab_x;
+  double grab_y;
+
   gboolean entered_compositor;
   struct wl_resource *entered_surface;
   double last_x, last_y;
@@ -275,8 +286,30 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
                                   GdkEventButton *event)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *pointer_resource;
   uint32_t serial = wl_display_next_serial (priv->wl_display);
+  guint32 button;
+
+  button = convert_gdk_button_to_libinput (event->button);
+
+  if (event->type == GDK_BUTTON_PRESS)
+    {
+      if (pointer->button_count == 0)
+        {
+          pointer->grab_button = button;
+          pointer->grab_device = gdk_event_get_device ((GdkEvent *)event);
+          pointer->grab_client = wl_resource_get_client (surface);
+          pointer->grab_time = event->time;
+          pointer->grab_x = event->x;
+          pointer->grab_y = event->y;
+      }
+      pointer->button_count++;
+    }
+  else
+    {
+      pointer->button_count--;
+    }
 
   if (surface == NULL)
     return;
@@ -285,8 +318,11 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
   if (pointer_resource)
     wl_pointer_send_button (pointer_resource, serial,
                             event->time,
-                            convert_gdk_button_to_libinput (event->button),
+                            button,
                             (event->type == GDK_BUTTON_PRESS ? 1 : 0));
+
+  if (pointer->button_count == 1 && event->type == GDK_BUTTON_PRESS)
+    pointer->grab_serial = wl_display_get_serial (priv->wl_display);
 }
 
 void
