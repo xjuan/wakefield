@@ -205,6 +205,11 @@ send_xdg_configure_request (WakefieldCompositor *compositor,
   wl_array_init(&states);
   s = wl_array_add(&states, sizeof *s);
   *s = XDG_SURFACE_STATE_FULLSCREEN;
+  if ((gtk_widget_get_state_flags (GTK_WIDGET (compositor)) & GTK_STATE_FLAG_BACKDROP) == 0)
+    {
+      s = wl_array_add(&states, sizeof *s);
+      *s = XDG_SURFACE_STATE_ACTIVATED;
+    }
   xdg_surface_send_configure (xdg_surface, allocation.width, allocation.height,
                               &states, serial);
   wl_array_release(&states);
@@ -231,6 +236,22 @@ wakefield_compositor_size_allocate (GtkWidget *widget,
     {
       refresh_output (compositor, output);
     }
+
+  wl_resource_for_each (xdg_surface_resource, &priv->xdg_surfaces)
+    {
+      send_xdg_configure_request (compositor, xdg_surface_resource);
+    }
+}
+
+static void
+wakefield_compositor_state_flags_changed (GtkWidget        *widget,
+                                          GtkStateFlags     old_state)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface_resource;
+
+  GTK_WIDGET_CLASS (wakefield_compositor_parent_class)->state_flags_changed (widget, old_state);
 
   wl_resource_for_each (xdg_surface_resource, &priv->xdg_surfaces)
     {
@@ -1118,6 +1139,7 @@ wakefield_compositor_class_init (WakefieldCompositorClass *klass)
   widget_class->button_press_event = wakefield_compositor_button_press_event;
   widget_class->button_release_event = wakefield_compositor_button_release_event;
   widget_class->motion_notify_event = wakefield_compositor_motion_notify_event;
+  widget_class->state_flags_changed = wakefield_compositor_state_flags_changed;
 }
 
 /* Wayland GSource */
