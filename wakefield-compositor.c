@@ -454,42 +454,33 @@ wakefield_compositor_scroll_event (GtkWidget      *widget,
   return TRUE;
 }
 
-
-static gboolean
-wakefield_compositor_motion_notify_event (GtkWidget      *widget,
-                                          GdkEventMotion *event)
-{
-  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-
-  priv->seat.pointer.last_x = event->x;
-  priv->seat.pointer.last_y = event->y;
-
-  wakefield_compositor_send_motion (compositor,
-                                    priv->seat.pointer.entered_surface,
-                                    event);
-
-  return FALSE;
-}
-
 static struct wl_resource *
-wakefield_compositor_get_topmost_surface (WakefieldCompositor *compositor)
+wakefield_compositor_get_topmost_surface (WakefieldCompositor *compositor,
+                                          int x,
+                                          int y)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct wl_resource *xdg_surface_resource;
+  int width, height;
 
   wl_resource_for_each_reverse (xdg_surface_resource, &priv->xdg_surfaces)
     {
       struct wl_resource *surface_resource;
       surface_resource = wakefield_xdg_surface_get_surface (xdg_surface_resource);
       if (surface_resource != NULL)
-        return surface_resource;
+        {
+          wakefield_surface_get_current_size (surface_resource, &width, &height);
+
+          if (x >= 0 && x < width &&
+              x >= 0 && y < height)
+            return surface_resource;
+        }
     }
 
   return NULL;
 }
 
-static void
+static gboolean
 wakefield_compositor_send_enter_leave (WakefieldCompositor *compositor)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
@@ -498,7 +489,9 @@ wakefield_compositor_send_enter_leave (WakefieldCompositor *compositor)
   topmost_surface = NULL;
 
   if (priv->seat.pointer.entered_compositor)
-    topmost_surface = wakefield_compositor_get_topmost_surface (compositor);
+    topmost_surface = wakefield_compositor_get_topmost_surface (compositor,
+                                                                priv->seat.pointer.last_x,
+                                                                priv->seat.pointer.last_y);
 
   if (topmost_surface != priv->seat.pointer.entered_surface)
     {
@@ -510,7 +503,30 @@ wakefield_compositor_send_enter_leave (WakefieldCompositor *compositor)
                                        priv->seat.pointer.entered_surface,
                                        priv->seat.pointer.last_x,
                                        priv->seat.pointer.last_y);
+      return TRUE;
     }
+
+  return FALSE;
+}
+
+static gboolean
+wakefield_compositor_motion_notify_event (GtkWidget      *widget,
+                                          GdkEventMotion *event)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  priv->seat.pointer.last_x = event->x;
+  priv->seat.pointer.last_y = event->y;
+
+  if (!wakefield_compositor_send_enter_leave (compositor))
+    {
+      wakefield_compositor_send_motion (compositor,
+                                        priv->seat.pointer.entered_surface,
+                                        event);
+    }
+
+  return FALSE;
 }
 
 static gboolean

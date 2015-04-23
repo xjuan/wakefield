@@ -44,12 +44,15 @@ void                wakefield_compositor_send_motion            (WakefieldCompos
                                                                  struct wl_resource  *surface,
                                                                  GdkEventMotion      *event);
 
-struct wl_resource *wakefield_surface_new  (WakefieldCompositor *compositor,
-                                            struct wl_client    *client,
-                                            struct wl_resource  *compositor_resource,
-                                            uint32_t             id);
-void                wakefield_surface_draw (struct wl_resource  *some_surface_resource,
-                                            cairo_t             *cr);
+struct wl_resource *wakefield_surface_new              (WakefieldCompositor *compositor,
+                                                        struct wl_client    *client,
+                                                        struct wl_resource  *compositor_resource,
+                                                        uint32_t             id);
+void                wakefield_surface_draw             (struct wl_resource  *some_surface_resource,
+                                                        cairo_t             *cr);
+void                wakefield_surface_get_current_size (struct wl_resource  *surface_resource,
+                                                        int                 *width,
+                                                        int                 *height);
 
 struct wl_resource *wakefield_xdg_surface_new (struct wl_client   *client,
                                                struct wl_resource *shell_resource,

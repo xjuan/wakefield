@@ -67,6 +67,24 @@ struct WakefieldXdgPopup
   struct wl_resource *resource;
 };
 
+void
+wakefield_surface_get_current_size (struct wl_resource *surface_resource,
+                                    int *width, int *height)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  struct wl_shm_buffer *shm_buffer;
+
+  *width = 0;
+  *height = 0;
+
+  shm_buffer = wl_shm_buffer_get (surface->current.buffer);
+  if (shm_buffer)
+    {
+      *width = wl_shm_buffer_get_width (shm_buffer) / surface->current.scale;
+      *height = wl_shm_buffer_get_height (shm_buffer) / surface->current.scale;
+    }
+}
+
 static cairo_format_t
 cairo_format_for_wl_shm_format (enum wl_shm_format format)
 {
