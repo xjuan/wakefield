@@ -754,6 +754,13 @@ wakefield_compositor_surface_destroyed (WakefieldCompositor *compositor,
   wakefield_compositor_send_enter_leave (compositor);
 }
 
+void
+wakefield_compositor_surface_mapped (WakefieldCompositor *compositor,
+                                     struct wl_resource  *surface)
+{
+  
+}
+
 static void
 wl_compositor_create_surface (struct wl_client *client,
                               struct wl_resource *compositor_resource,

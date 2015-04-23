@@ -45,6 +45,7 @@ struct WakefieldSurface
 
   cairo_region_t *damage;
   struct WakefieldSurfacePendingState pending, current;
+  gboolean mapped;
 };
 
 struct WakefieldXdgSurface
@@ -308,7 +309,7 @@ wl_surface_commit (struct wl_client *client,
 
       gtk_widget_set_size_request (GTK_WIDGET (xdg_popup->drawing_area), new_width, new_height);
 
-      if (!gtk_widget_get_mapped (xdg_popup->toplevel))
+      if (!surface->mapped)
         {
           gdk_window_get_root_coords (gtk_widget_get_window (GTK_WIDGET (compositor)),
                                       allocation.x, allocation.y, &root_x, &root_y);
@@ -332,6 +333,12 @@ wl_surface_commit (struct wl_client *client,
 
   surface->pending.buffer = NULL;
   surface->pending.scale = 1;
+
+  if (!surface->mapped)
+    {
+      surface->mapped = TRUE;
+      wakefield_compositor_surface_mapped (surface->compositor, surface->resource);
+    }
 }
 
 static void

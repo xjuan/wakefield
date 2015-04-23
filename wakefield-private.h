@@ -28,6 +28,8 @@
 struct wl_display * wakefield_compositor_get_display            (WakefieldCompositor *compositor);
 void                wakefield_compositor_surface_destroyed      (WakefieldCompositor *compositor,
                                                                  struct wl_resource  *surface);
+void                wakefield_compositor_surface_mapped         (WakefieldCompositor *compositor,
+                                                                 struct wl_resource  *surface);
 void                wakefield_compositor_send_enter             (WakefieldCompositor *compositor,
                                                                  struct wl_resource  *surface,
                                                                  double               x,
