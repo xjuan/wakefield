@@ -26,7 +26,7 @@
 #include <wayland-server.h>
 
 struct wl_display * wakefield_compositor_get_display            (WakefieldCompositor *compositor);
-void                wakefield_compositor_surface_destroyed      (WakefieldCompositor *compositor,
+void                wakefield_compositor_surface_unmapped       (WakefieldCompositor *compositor,
                                                                  struct wl_resource  *surface);
 void                wakefield_compositor_surface_mapped         (WakefieldCompositor *compositor,
                                                                  struct wl_resource  *surface);
@@ -59,7 +59,9 @@ struct wl_resource * wakefield_surface_new              (WakefieldCompositor *co
 void                 wakefield_surface_draw             (struct wl_resource  *surface_resource,
                                                          cairo_t             *cr);
 struct wl_resource * wakefield_surface_get_xdg_surface  (struct wl_resource  *surface_resource);
+struct wl_resource * wakefield_surface_get_xdg_popup    (struct wl_resource  *surface_resource);
 WakefieldSurfaceRole wakefield_surface_get_role         (struct wl_resource  *surface_resource);
+GdkWindow *          wakefield_surface_get_window       (struct wl_resource  *surface_resource);
 
 struct wl_resource *wakefield_xdg_surface_new (struct wl_client   *client,
                                                struct wl_resource *shell_resource,
@@ -78,8 +80,12 @@ struct wl_resource *wakefield_xdg_popup_new (WakefieldCompositor *compositor,
                                              uint32_t            id,
                                              struct wl_resource *surface_resource,
                                              struct wl_resource *parent_resource,
+                                             guint32 serial,
                                              gint32 x, gint32 y);
 
+guint32             wakefield_xdg_popup_get_serial (struct wl_resource *xdg_popup_resource);
+GdkWindow *         wakefield_xdg_popup_get_window (struct wl_resource *xdg_popup_resource);
+void                wakefield_xdg_popup_close      (struct wl_resource *xdg_popup_resource);
 
 cairo_region_t *wakefield_region_get_region (struct wl_resource *region_resource);
 

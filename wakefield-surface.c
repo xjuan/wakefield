@@ -65,6 +65,7 @@ struct WakefieldXdgPopup
   GtkWidget *toplevel;
   GtkWidget *drawing_area;
   int x, y;
+  guint32 serial;
 
   struct wl_resource *resource;
 };
@@ -76,6 +77,16 @@ wakefield_surface_get_xdg_surface  (struct wl_resource  *surface_resource)
 
   if (surface->xdg_surface)
     return surface->xdg_surface->resource;
+  return NULL;
+}
+
+struct wl_resource *
+wakefield_surface_get_xdg_popup  (struct wl_resource  *surface_resource)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+
+  if (surface->xdg_popup)
+    return surface->xdg_popup->resource;
   return NULL;
 }
 
@@ -91,6 +102,20 @@ wakefield_surface_get_role (struct wl_resource  *surface_resource)
     return WAKEFIELD_SURFACE_ROLE_XDG_POPUP;
 
   return WAKEFIELD_SURFACE_ROLE_NONE;
+}
+
+GdkWindow *
+wakefield_surface_get_window (struct wl_resource  *surface_resource)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+
+  if (surface->xdg_surface)
+    return wakefield_xdg_surface_get_window (surface->xdg_surface->resource);
+
+  if (surface->xdg_popup)
+    return wakefield_xdg_popup_get_window (surface->xdg_popup->resource);
+
+  return NULL;
 }
 
 static void
@@ -389,6 +414,9 @@ wl_surface_finalize (struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
 
+  if (surface->mapped)
+    wakefield_compositor_surface_unmapped (surface->compositor, surface->resource);
+
   if (surface->xdg_surface)
     surface->xdg_surface->surface = NULL;
 
@@ -396,8 +424,6 @@ wl_surface_finalize (struct wl_resource *resource)
     surface->xdg_popup->surface = NULL;
 
   wl_list_remove (wl_resource_get_link (resource));
-
-  wakefield_compositor_surface_destroyed (surface->compositor, surface->resource);
 
   destroy_pending_state (&surface->pending);
   destroy_pending_state (&surface->current);
@@ -713,6 +739,9 @@ xdg_popup_enter_notify (GtkWidget        *widget,
                         GdkEventCrossing *event,
                         struct WakefieldXdgPopup *xdg_popup)
 {
+  if (event->mode == GDK_CROSSING_GRAB || event->mode == GDK_CROSSING_UNGRAB)
+    return FALSE;
+
   if (xdg_popup->surface)
     wakefield_compositor_send_enter (xdg_popup->surface->compositor,
                                      xdg_popup->surface->resource,
@@ -726,6 +755,9 @@ xdg_popup_leave_notify (GtkWidget        *widget,
                         GdkEventCrossing *event,
                         struct WakefieldXdgPopup *xdg_popup)
 {
+  if (event->mode == GDK_CROSSING_GRAB || event->mode == GDK_CROSSING_UNGRAB)
+    return FALSE;
+
   if (xdg_popup->surface)
     wakefield_compositor_send_leave (xdg_popup->surface->compositor,
                                      xdg_popup->surface->resource,
@@ -783,6 +815,39 @@ xdg_popup_scroll_event (GtkWidget      *widget,
   return TRUE;
 }
 
+guint32
+wakefield_xdg_popup_get_serial (struct wl_resource *xdg_popup_resource)
+{
+  struct WakefieldXdgPopup *xdg_popup = wl_resource_get_user_data (xdg_popup_resource);
+
+  return xdg_popup->serial;
+}
+
+GdkWindow *
+wakefield_xdg_popup_get_window (struct wl_resource *xdg_popup_resource)
+{
+  struct WakefieldXdgPopup *xdg_popup = wl_resource_get_user_data (xdg_popup_resource);
+
+  return gtk_widget_get_window (xdg_popup->drawing_area);
+}
+
+void
+wakefield_xdg_popup_close (struct wl_resource *xdg_popup_resource)
+{
+  struct WakefieldXdgPopup *xdg_popup = wl_resource_get_user_data (xdg_popup_resource);
+  struct WakefieldSurface *surface = xdg_popup->surface;
+
+  if (surface && surface->mapped)
+    {
+      gtk_widget_hide (xdg_popup->toplevel);
+      surface->mapped = FALSE;
+
+      wakefield_compositor_surface_unmapped (surface->compositor, surface->resource);
+    }
+
+  xdg_popup_send_popup_done (xdg_popup_resource);
+}
+
 struct wl_resource *
 wakefield_xdg_popup_new (WakefieldCompositor *compositor,
                          struct wl_client   *client,
@@ -790,6 +855,7 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
                          uint32_t            id,
                          struct wl_resource *surface_resource,
                          struct wl_resource *parent_resource,
+                         guint32 serial,
                          gint32 x, gint32 y)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
@@ -814,6 +880,7 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
                          GDK_EXPOSURE_MASK);
   gtk_container_add (GTK_CONTAINER (xdg_popup->toplevel), xdg_popup->drawing_area);
   gtk_widget_show (xdg_popup->drawing_area);
+  xdg_popup->serial = serial;
   xdg_popup->x = x;
   xdg_popup->y = y;
 

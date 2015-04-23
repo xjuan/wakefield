@@ -41,14 +41,14 @@ struct WakefieldPointer
 
   guint32 button_count;
 
+  struct wl_resource *current_surface;
+
   struct wl_client *grab_client;
   guint32 grab_button;
   GdkDevice *grab_device;
-  gboolean grab_is_popup;
+  struct wl_resource *grab_xdg_popup;
   guint32 grab_time;
   guint32 grab_serial;
-  double grab_x;
-  double grab_y;
 };
 
 struct WakefieldOutput
@@ -279,6 +279,35 @@ convert_gdk_button_to_libinput (int gdk_button)
    }
 }
 
+static void
+wakefield_compositor_clear_grab (WakefieldCompositor *compositor)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
+
+  if (pointer->grab_xdg_popup)
+    gdk_device_ungrab (pointer->grab_device, GDK_CURRENT_TIME);
+
+  pointer->grab_button = 0;
+  pointer->grab_serial = 0;
+  pointer->grab_device = NULL;
+  pointer->grab_client = NULL;
+  pointer->grab_xdg_popup = NULL;
+}
+
+static gboolean
+should_send_pointer_event (WakefieldCompositor *compositor)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
+
+  /* We never deliver events outside a client-owned surface except when
+     there is an implicit grab (not popup grab, those are owner_events). */
+  return
+    pointer->current_surface != NULL ||
+    (pointer->grab_button != 0 && pointer->grab_xdg_popup == NULL);
+}
+
 void
 wakefield_compositor_send_button (WakefieldCompositor *compositor,
                                   struct wl_resource *surface,
@@ -286,7 +315,7 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
-  struct wl_resource *pointer_resource;
+  struct wl_resource *pointer_resource, *xdg_popup_resource;
   uint32_t serial = wl_display_next_serial (priv->wl_display);
   guint32 button;
 
@@ -300,25 +329,34 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
           pointer->grab_device = gdk_event_get_device ((GdkEvent *)event);
           pointer->grab_client = wl_resource_get_client (surface);
           pointer->grab_time = event->time;
-          pointer->grab_x = event->x;
-          pointer->grab_y = event->y;
       }
       pointer->button_count++;
     }
   else
     {
       pointer->button_count--;
+
+      if (pointer->button_count == 0)
+        {
+          if (pointer->grab_xdg_popup == NULL)
+            wakefield_compositor_clear_grab (compositor);
+          else if (pointer->grab_xdg_popup != NULL && priv->seat.pointer.current_surface == NULL)
+            {
+              wl_resource_for_each (xdg_popup_resource, &priv->xdg_popups)
+                wakefield_xdg_popup_close (xdg_popup_resource);
+            }
+        }
     }
 
-  if (surface == NULL)
-    return;
-
-  pointer_resource = wakefield_compositor_get_pointer_for_client (compositor, wl_resource_get_client (surface));
-  if (pointer_resource)
-    wl_pointer_send_button (pointer_resource, serial,
-                            event->time,
-                            button,
-                            (event->type == GDK_BUTTON_PRESS ? 1 : 0));
+  if (surface != NULL && should_send_pointer_event (compositor))
+    {
+      pointer_resource = wakefield_compositor_get_pointer_for_client (compositor, wl_resource_get_client (surface));
+      if (pointer_resource)
+        wl_pointer_send_button (pointer_resource, serial,
+                                event->time,
+                                button,
+                                (event->type == GDK_BUTTON_PRESS ? 1 : 0));
+    }
 
   if (pointer->button_count == 1 && event->type == GDK_BUTTON_PRESS)
     pointer->grab_serial = wl_display_get_serial (priv->wl_display);
@@ -336,7 +374,7 @@ wakefield_compositor_send_scroll (WakefieldCompositor *compositor,
 
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
-  if (pointer_resource)
+  if (pointer_resource && should_send_pointer_event (compositor))
     {
       switch (event->direction)
         {
@@ -396,7 +434,7 @@ wakefield_compositor_send_motion (WakefieldCompositor *compositor,
 
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
-  if (pointer_resource)
+  if (pointer_resource && should_send_pointer_event (compositor))
     {
       wl_pointer_send_motion (pointer_resource,
                               event->time,
@@ -417,9 +455,12 @@ wakefield_compositor_send_enter (WakefieldCompositor *compositor,
   if (surface == NULL)
     return;
 
+  g_assert (priv->seat.pointer.current_surface == NULL);
+  priv->seat.pointer.current_surface = surface;
+
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
-  if (pointer_resource)
+  if (pointer_resource && should_send_pointer_event (compositor))
     {
       wl_pointer_send_enter (pointer_resource, serial,
                              surface,
@@ -440,15 +481,17 @@ wakefield_compositor_send_leave (WakefieldCompositor *compositor,
   if (surface == NULL)
     return;
 
+  g_assert (priv->seat.pointer.current_surface == surface);
+  priv->seat.pointer.current_surface = NULL;
+
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
-  if (pointer_resource)
+  if (pointer_resource && should_send_pointer_event (compositor))
     {
       wl_pointer_send_leave (pointer_resource, serial,
                              surface);
     }
 }
-
 
 static struct wl_resource *
 wakefield_compositor_get_xdg_surface_for_window (WakefieldCompositor *compositor,
@@ -534,6 +577,9 @@ wakefield_compositor_enter_notify_event (GtkWidget        *widget,
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   struct wl_resource *surface;
 
+  if (event->mode == GDK_CROSSING_GRAB || event->mode == GDK_CROSSING_UNGRAB)
+    return FALSE;
+
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
   if (surface)
@@ -550,6 +596,9 @@ wakefield_compositor_leave_notify_event (GtkWidget        *widget,
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   struct wl_resource *surface;
+
+  if (event->mode == GDK_CROSSING_GRAB || event->mode == GDK_CROSSING_UNGRAB)
+    return FALSE;
 
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
@@ -579,7 +628,6 @@ pointer_set_cursor (struct wl_client *client,
                     struct wl_resource *surface_resource,
                     int32_t x, int32_t y)
 {
-  g_warning ("TODO: Set cursor\n");
 }
 
 static const struct wl_pointer_interface pointer_interface = {
@@ -746,10 +794,24 @@ wl_compositor_create_region (struct wl_client *client,
 }
 
 void
-wakefield_compositor_surface_destroyed (WakefieldCompositor *compositor,
-                                        struct wl_resource  *surface)
+wakefield_compositor_surface_unmapped (WakefieldCompositor *compositor,
+                                       struct wl_resource  *surface)
 {
-  gtk_widget_queue_draw (GTK_WIDGET (compositor));
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface = wakefield_surface_get_xdg_surface (surface);
+  struct wl_resource *xdg_popup = wakefield_surface_get_xdg_popup (surface);
+
+  if (priv->seat.pointer.current_surface == surface)
+    priv->seat.pointer.current_surface = NULL;
+
+  if (xdg_surface)
+    gtk_widget_queue_draw (GTK_WIDGET (compositor));
+
+  if (xdg_popup != NULL &&
+      priv->seat.pointer.grab_xdg_popup == xdg_popup)
+    {
+      wakefield_compositor_clear_grab (compositor);
+    }
 }
 
 void
@@ -851,6 +913,7 @@ xdg_get_xdg_popup (struct wl_client *client,
 {
   WakefieldCompositor *compositor = wl_resource_get_user_data (shell_resource);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *xdg_popup, *output_resource;
   WakefieldSurfaceRole role, parent_role;
 
@@ -889,11 +952,46 @@ xdg_get_xdg_popup (struct wl_client *client,
       return;
     }
 
-  xdg_popup = wakefield_xdg_popup_new (compositor, client, shell_resource, id, surface_resource, parent_resource, x, y);
+  if (!wl_list_empty (&priv->xdg_popups))
+    {
+      struct wl_resource *top_xdg_popup = wl_resource_from_link (priv->xdg_popups.next);
+      if (parent_resource != wakefield_xdg_surface_get_surface (top_xdg_popup))
+        {
+          wl_resource_post_error (shell_resource,
+                                  XDG_POPUP_ERROR_NOT_THE_TOPMOST_POPUP,
+                                  "xdg_popup was not created on the "
+                                  "topmost popup");
+          return;
+        }
+    }
+
+  xdg_popup = wakefield_xdg_popup_new (compositor, client, shell_resource, id, surface_resource, parent_resource, serial, x, y);
   wl_list_insert (&priv->xdg_popups, wl_resource_get_link (xdg_popup));
 
   output_resource = wl_resource_find_for_client (&priv->output.resource_list, client);
   wl_surface_send_enter (surface_resource, output_resource);
+
+  if (pointer->grab_button != 0 &&
+      wakefield_xdg_popup_get_serial (xdg_popup) == pointer->grab_serial)
+    {
+      pointer->grab_xdg_popup = xdg_popup;
+      gdk_device_grab (pointer->grab_device,
+                       wakefield_surface_get_window (parent_resource),
+                       GDK_OWNERSHIP_NONE,
+                       TRUE,
+                       GDK_POINTER_MOTION_MASK |
+                       GDK_BUTTON_PRESS_MASK |
+                       GDK_BUTTON_RELEASE_MASK |
+                       GDK_SCROLL_MASK |
+                       GDK_ENTER_NOTIFY_MASK |
+                       GDK_LEAVE_NOTIFY_MASK,
+                       NULL,
+                       pointer->grab_time);
+    }
+  else
+    {
+      wakefield_xdg_popup_close (xdg_popup);
+    }
 }
 
 static void
