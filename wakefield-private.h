@@ -44,12 +44,19 @@ void                wakefield_compositor_send_motion            (WakefieldCompos
                                                                  struct wl_resource  *surface,
                                                                  GdkEventMotion      *event);
 
+typedef enum {
+  WAKEFIELD_SURFACE_ROLE_NONE,
+  WAKEFIELD_SURFACE_ROLE_XDG_SURFACE,
+  WAKEFIELD_SURFACE_ROLE_XDG_POPUP
+} WakefieldSurfaceRole;
+
 struct wl_resource *wakefield_surface_new              (WakefieldCompositor *compositor,
                                                         struct wl_client    *client,
                                                         struct wl_resource  *compositor_resource,
                                                         uint32_t             id);
-void                wakefield_surface_draw             (struct wl_resource  *some_surface_resource,
+void                wakefield_surface_draw             (struct wl_resource  *surface_resource,
                                                         cairo_t             *cr);
+WakefieldSurfaceRole wakefield_surface_get_role        (struct wl_resource  *surface_resource);
 void                wakefield_surface_get_current_size (struct wl_resource  *surface_resource,
                                                         int                 *width,
                                                         int                 *height);

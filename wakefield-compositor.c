@@ -803,6 +803,23 @@ xdg_get_xdg_surface (struct wl_client *client,
   struct wl_resource *xdg_surface, *output_resource;
   WakefieldCompositor *compositor = wl_resource_get_user_data (shell_resource);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  WakefieldSurfaceRole role;
+
+  if (surface_resource == NULL)
+    {
+      wl_resource_post_error (shell_resource,
+                              WL_DISPLAY_ERROR_INVALID_OBJECT,
+                              "xdg_shell::get_xdg_popup requires a surface");
+      return;
+    }
+
+  role = wakefield_surface_get_role (surface_resource);
+  if (role)
+    {
+      wl_resource_post_error (shell_resource, XDG_SHELL_ERROR_ROLE,
+                              "This wl_surface already has a role");
+      return;
+    }
 
   xdg_surface = wakefield_xdg_surface_new (client, shell_resource, id, surface_resource);
   wl_list_insert (priv->xdg_surfaces.prev, wl_resource_get_link (xdg_surface));
@@ -828,15 +845,48 @@ xdg_get_xdg_popup (struct wl_client *client,
   WakefieldCompositor *compositor = wl_resource_get_user_data (shell_resource);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct wl_resource *xdg_popup, *output_resource;
+  WakefieldSurfaceRole role, parent_role;
+
+  if (surface_resource == NULL)
+    {
+      wl_resource_post_error (shell_resource,
+                              WL_DISPLAY_ERROR_INVALID_OBJECT,
+                              "xdg_shell::get_xdg_popup requires a surface");
+      return;
+    }
+
+  role = wakefield_surface_get_role (surface_resource);
+  if (role)
+    {
+      wl_resource_post_error (shell_resource, XDG_SHELL_ERROR_ROLE,
+                              "This wl_surface already has a role");
+      return;
+    }
+
+  if (parent_resource == NULL)
+    {
+      wl_resource_post_error (shell_resource,
+                              WL_DISPLAY_ERROR_INVALID_OBJECT,
+                              "xdg_shell::get_xdg_popup requires a parent shell surface");
+      return;
+    }
+
+  parent_role = wakefield_surface_get_role (parent_resource);
+
+  if (parent_role != WAKEFIELD_SURFACE_ROLE_XDG_SURFACE &&
+      parent_role != WAKEFIELD_SURFACE_ROLE_XDG_POPUP)
+    {
+      wl_resource_post_error (shell_resource,
+                              XDG_POPUP_ERROR_INVALID_PARENT,
+                              "xdg_popup parent was invalid");
+      return;
+    }
 
   xdg_popup = wakefield_xdg_popup_new (compositor, client, shell_resource, id, surface_resource, parent_resource, x, y);
-  if (xdg_popup)
-    {
-      wl_list_insert (&priv->xdg_popups, wl_resource_get_link (xdg_popup));
+  wl_list_insert (&priv->xdg_popups, wl_resource_get_link (xdg_popup));
 
-      output_resource = wl_resource_find_for_client (&priv->output.resource_list, client);
-      wl_surface_send_enter (surface_resource, output_resource);
-    }
+  output_resource = wl_resource_find_for_client (&priv->output.resource_list, client);
+  wl_surface_send_enter (surface_resource, output_resource);
 }
 
 static void

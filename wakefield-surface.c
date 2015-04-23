@@ -67,6 +67,20 @@ struct WakefieldXdgPopup
   struct wl_resource *resource;
 };
 
+WakefieldSurfaceRole
+wakefield_surface_get_role (struct wl_resource  *surface_resource)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+
+  if (surface->xdg_surface)
+    return WAKEFIELD_SURFACE_ROLE_XDG_SURFACE;
+
+  if (surface->xdg_popup)
+    return WAKEFIELD_SURFACE_ROLE_XDG_POPUP;
+
+  return WAKEFIELD_SURFACE_ROLE_NONE;
+}
+
 void
 wakefield_surface_get_current_size (struct wl_resource *surface_resource,
                                     int *width, int *height)
@@ -685,16 +699,6 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
   struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   struct WakefieldSurface *parent_surface = wl_resource_get_user_data (parent_resource);
   struct WakefieldXdgPopup *xdg_popup;
-
-  if (parent_surface == NULL ||
-      (parent_surface->xdg_popup == NULL &&
-       parent_surface->xdg_surface == NULL))
-    {
-      wl_resource_post_error (shell_resource,
-                              XDG_POPUP_ERROR_INVALID_PARENT,
-                              "xdg_popup parent was invalid");
-      return NULL;
-    }
 
   xdg_popup = g_slice_new0 (struct WakefieldXdgPopup);
   xdg_popup->surface = surface;
