@@ -343,18 +343,15 @@ wl_surface_commit (struct wl_client *client,
   else if (surface->xdg_popup && new_width > 0 && new_height > 0)
     {
       struct WakefieldXdgPopup *xdg_popup = surface->xdg_popup;
-      GtkAllocation allocation;
-      WakefieldCompositor *compositor = xdg_popup->surface->compositor;
       gint root_x, root_y;
-
-      gtk_widget_get_allocation (GTK_WIDGET (compositor), &allocation);
 
       gtk_widget_set_size_request (GTK_WIDGET (xdg_popup->drawing_area), new_width, new_height);
 
       if (!surface->mapped)
         {
-          gdk_window_get_root_coords (gtk_widget_get_window (GTK_WIDGET (compositor)),
-                                      allocation.x, allocation.y, &root_x, &root_y);
+          GdkWindow *parent_window = wakefield_surface_get_window (xdg_popup->parent_surface->resource);
+
+          gdk_window_get_root_coords (parent_window, 0, 0, &root_x, &root_y);
 
           gtk_window_move (GTK_WINDOW (xdg_popup->toplevel),
                            root_x + xdg_popup->x, root_y + xdg_popup->y);
