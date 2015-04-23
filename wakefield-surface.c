@@ -53,6 +53,7 @@ struct WakefieldXdgSurface
   struct WakefieldSurface *surface;
 
   struct wl_resource *resource;
+  GdkWindow *window;
 };
 
 struct WakefieldXdgPopup
@@ -68,6 +69,16 @@ struct WakefieldXdgPopup
   struct wl_resource *resource;
 };
 
+struct wl_resource *
+wakefield_surface_get_xdg_surface  (struct wl_resource  *surface_resource)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+
+  if (surface->xdg_surface)
+    return surface->xdg_surface->resource;
+  return NULL;
+}
+
 WakefieldSurfaceRole
 wakefield_surface_get_role (struct wl_resource  *surface_resource)
 {
@@ -82,11 +93,10 @@ wakefield_surface_get_role (struct wl_resource  *surface_resource)
   return WAKEFIELD_SURFACE_ROLE_NONE;
 }
 
-void
-wakefield_surface_get_current_size (struct wl_resource *surface_resource,
+static void
+wakefield_surface_get_current_size (struct WakefieldSurface *surface,
                                     int *width, int *height)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   struct wl_shm_buffer *shm_buffer;
 
   *width = 0;
@@ -297,7 +307,14 @@ wl_surface_commit (struct wl_client *client,
   /* process damage */
 
   if (surface->xdg_surface)
-    gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
+    {
+      gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
+
+      if (surface->xdg_surface->window)
+        gdk_window_resize (surface->xdg_surface->window,
+                           new_width,
+                           new_height);
+    }
   else if (surface->xdg_popup && new_width > 0 && new_height > 0)
     {
       struct WakefieldXdgPopup *xdg_popup = surface->xdg_popup;
@@ -428,6 +445,8 @@ static void
 xdg_surface_finalize (struct wl_resource *xdg_resource)
 {
   struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_resource);
+
+  wakefield_xdg_surface_unrealize (xdg_resource);
 
   wl_list_remove (wl_resource_get_link (xdg_resource));
 
@@ -563,6 +582,76 @@ wakefield_xdg_surface_get_surface (struct wl_resource *xdg_surface_resource)
   return NULL;
 }
 
+GdkWindow *
+wakefield_xdg_surface_get_window (struct wl_resource *xdg_surface_resource)
+{
+  struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_surface_resource);
+
+  return xdg_surface->window;
+}
+
+void
+wakefield_xdg_surface_realize (struct wl_resource *xdg_surface_resource,
+                               GdkWindow *parent_window)
+{
+  WakefieldCompositor *compositor;
+  struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_surface_resource);
+  struct WakefieldSurface *surface = xdg_surface->surface;
+  GdkWindowAttr attributes;
+  gint attributes_mask;
+  int width, height;
+
+  if (surface == NULL)
+    return;
+
+  compositor = surface->compositor;
+
+  wakefield_surface_get_current_size (xdg_surface->surface,
+                                      &width, &height);
+
+  attributes.x = 0;
+  attributes.y = 0;
+  attributes.width = width;
+  attributes.height = height;
+  attributes.wclass = GDK_INPUT_ONLY;
+  attributes_mask = GDK_WA_X | GDK_WA_Y;
+  attributes.window_type = GDK_WINDOW_CHILD;
+  attributes.event_mask =
+    GDK_POINTER_MOTION_MASK |
+    GDK_BUTTON_PRESS_MASK |
+    GDK_BUTTON_RELEASE_MASK |
+    GDK_SCROLL_MASK |
+    GDK_FOCUS_CHANGE_MASK |
+    GDK_KEY_PRESS_MASK |
+    GDK_KEY_RELEASE_MASK |
+    GDK_ENTER_NOTIFY_MASK |
+    GDK_LEAVE_NOTIFY_MASK;
+
+  xdg_surface->window = gdk_window_new (parent_window, &attributes, attributes_mask);
+  gtk_widget_register_window (GTK_WIDGET (compositor), xdg_surface->window);
+  gdk_window_show (xdg_surface->window);
+}
+
+void
+wakefield_xdg_surface_unrealize (struct wl_resource *xdg_surface_resource)
+{
+  WakefieldCompositor *compositor;
+  struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_surface_resource);
+  struct WakefieldSurface *surface = xdg_surface->surface;
+
+  if (xdg_surface->window)
+    {
+      if (surface != NULL)
+        {
+          compositor = surface->compositor;
+          gtk_widget_unregister_window (GTK_WIDGET (compositor), xdg_surface->window);
+        }
+
+      gdk_window_destroy (xdg_surface->window);
+      xdg_surface->window = NULL;
+    }
+}
+
 struct wl_resource *
 wakefield_xdg_surface_new (struct wl_client *client,
                            struct wl_resource *shell_resource,
@@ -627,8 +716,7 @@ xdg_popup_enter_notify (GtkWidget        *widget,
   if (xdg_popup->surface)
     wakefield_compositor_send_enter (xdg_popup->surface->compositor,
                                      xdg_popup->surface->resource,
-                                     event->x,
-                                     event->y);
+                                     event);
 
   return FALSE;
 }
@@ -640,7 +728,8 @@ xdg_popup_leave_notify (GtkWidget        *widget,
 {
   if (xdg_popup->surface)
     wakefield_compositor_send_leave (xdg_popup->surface->compositor,
-                                     xdg_popup->surface->resource);
+                                     xdg_popup->surface->resource,
+                                     event);
 
   return FALSE;
 }

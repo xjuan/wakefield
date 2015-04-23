@@ -32,10 +32,10 @@ void                wakefield_compositor_surface_mapped         (WakefieldCompos
                                                                  struct wl_resource  *surface);
 void                wakefield_compositor_send_enter             (WakefieldCompositor *compositor,
                                                                  struct wl_resource  *surface,
-                                                                 double               x,
-                                                                 double               y);
+                                                                 GdkEventCrossing     *event);
 void                wakefield_compositor_send_leave             (WakefieldCompositor *compositor,
-                                                                 struct wl_resource  *surface);
+                                                                 struct wl_resource  *surface,
+                                                                 GdkEventCrossing    *event);
 void                wakefield_compositor_send_button            (WakefieldCompositor *compositor,
                                                                  struct wl_resource  *surface,
                                                                  GdkEventButton      *event);
@@ -52,16 +52,14 @@ typedef enum {
   WAKEFIELD_SURFACE_ROLE_XDG_POPUP
 } WakefieldSurfaceRole;
 
-struct wl_resource *wakefield_surface_new              (WakefieldCompositor *compositor,
-                                                        struct wl_client    *client,
-                                                        struct wl_resource  *compositor_resource,
-                                                        uint32_t             id);
-void                wakefield_surface_draw             (struct wl_resource  *surface_resource,
-                                                        cairo_t             *cr);
-WakefieldSurfaceRole wakefield_surface_get_role        (struct wl_resource  *surface_resource);
-void                wakefield_surface_get_current_size (struct wl_resource  *surface_resource,
-                                                        int                 *width,
-                                                        int                 *height);
+struct wl_resource * wakefield_surface_new              (WakefieldCompositor *compositor,
+                                                         struct wl_client    *client,
+                                                         struct wl_resource  *compositor_resource,
+                                                         uint32_t             id);
+void                 wakefield_surface_draw             (struct wl_resource  *surface_resource,
+                                                         cairo_t             *cr);
+struct wl_resource * wakefield_surface_get_xdg_surface  (struct wl_resource  *surface_resource);
+WakefieldSurfaceRole wakefield_surface_get_role         (struct wl_resource  *surface_resource);
 
 struct wl_resource *wakefield_xdg_surface_new (struct wl_client   *client,
                                                struct wl_resource *shell_resource,
@@ -69,6 +67,10 @@ struct wl_resource *wakefield_xdg_surface_new (struct wl_client   *client,
                                                struct wl_resource *surface_resource);
 
 struct wl_resource *wakefield_xdg_surface_get_surface (struct wl_resource *xdg_surface_resource);
+void                wakefield_xdg_surface_realize (struct wl_resource *xdg_surface_resource,
+                                                   GdkWindow *parent);
+void                wakefield_xdg_surface_unrealize (struct wl_resource *xdg_surface_resource);
+GdkWindow *         wakefield_xdg_surface_get_window (struct wl_resource *xdg_surface_resource);
 
 struct wl_resource *wakefield_xdg_popup_new (WakefieldCompositor *compositor,
                                              struct wl_client   *client,

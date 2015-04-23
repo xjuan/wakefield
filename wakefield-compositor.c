@@ -49,10 +49,6 @@ struct WakefieldPointer
   guint32 grab_serial;
   double grab_x;
   double grab_y;
-
-  gboolean entered_compositor;
-  struct wl_resource *entered_surface;
-  double last_x, last_y;
 };
 
 struct WakefieldOutput
@@ -99,6 +95,7 @@ wakefield_compositor_realize (GtkWidget *widget)
   GdkWindow *window;
   GdkWindowAttr attributes;
   gint attributes_mask;
+  struct wl_resource *xdg_surface_resource;
 
   gtk_widget_set_realized (widget, TRUE);
 
@@ -119,20 +116,16 @@ wakefield_compositor_realize (GtkWidget *widget)
   attributes.window_type = GDK_WINDOW_CHILD;
 
   attributes.event_mask = (gtk_widget_get_events (widget) |
-                           GDK_POINTER_MOTION_MASK |
-                           GDK_BUTTON_PRESS_MASK |
-                           GDK_BUTTON_RELEASE_MASK |
-                           GDK_SCROLL_MASK |
-                           GDK_FOCUS_CHANGE_MASK |
-                           GDK_KEY_PRESS_MASK |
-                           GDK_KEY_RELEASE_MASK |
-                           GDK_ENTER_NOTIFY_MASK |
-                           GDK_LEAVE_NOTIFY_MASK |
                            GDK_EXPOSURE_MASK);
 
   priv->event_window = gdk_window_new (window,
                                        &attributes, attributes_mask);
   gtk_widget_register_window (widget, priv->event_window);
+
+  wl_resource_for_each (xdg_surface_resource, &priv->xdg_surfaces)
+    {
+      wakefield_xdg_surface_realize (xdg_surface_resource, priv->event_window);
+    }
 }
 
 static void
@@ -140,6 +133,12 @@ wakefield_compositor_unrealize (GtkWidget *widget)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface_resource;
+
+  wl_resource_for_each (xdg_surface_resource, &priv->xdg_surfaces)
+    {
+      wakefield_xdg_surface_unrealize (xdg_surface_resource);
+    }
 
   if (priv->event_window != NULL)
     {
@@ -409,8 +408,7 @@ wakefield_compositor_send_motion (WakefieldCompositor *compositor,
 void
 wakefield_compositor_send_enter (WakefieldCompositor *compositor,
                                  struct wl_resource  *surface,
-                                 double               x,
-                                 double               y)
+                                 GdkEventCrossing *event)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct wl_resource *pointer_resource;
@@ -425,14 +423,15 @@ wakefield_compositor_send_enter (WakefieldCompositor *compositor,
     {
       wl_pointer_send_enter (pointer_resource, serial,
                              surface,
-                             wl_fixed_from_double (x),
-                             wl_fixed_from_double (y));
+                             wl_fixed_from_double (event->x),
+                             wl_fixed_from_double (event->y));
     }
 }
 
 void
 wakefield_compositor_send_leave (WakefieldCompositor *compositor,
-                                 struct wl_resource  *surface)
+                                 struct wl_resource  *surface,
+                                 GdkEventCrossing *event)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct wl_resource *pointer_resource;
@@ -450,16 +449,35 @@ wakefield_compositor_send_leave (WakefieldCompositor *compositor,
     }
 }
 
+
+static struct wl_resource *
+wakefield_compositor_get_xdg_surface_for_window (WakefieldCompositor *compositor,
+                                                 GdkWindow *window)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface_resource;
+
+  wl_resource_for_each (xdg_surface_resource, &priv->xdg_surfaces)
+    {
+      if (window == wakefield_xdg_surface_get_window (xdg_surface_resource))
+        return wakefield_xdg_surface_get_surface (xdg_surface_resource);
+    }
+
+  return NULL;
+}
+
+
 static gboolean
 wakefield_compositor_button_press_event (GtkWidget      *widget,
                                          GdkEventButton *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *surface;
 
-  wakefield_compositor_send_button (compositor,
-                                    priv->seat.pointer.entered_surface,
-                                    event);
+  surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
+
+  if (surface)
+    wakefield_compositor_send_button (compositor, surface, event);
 
   return TRUE;
 }
@@ -469,11 +487,12 @@ wakefield_compositor_button_release_event (GtkWidget      *widget,
                                            GdkEventButton *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *surface;
 
-  wakefield_compositor_send_button (compositor,
-                                    priv->seat.pointer.entered_surface,
-                                    event);
+  surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
+
+  if (surface)
+    wakefield_compositor_send_button (compositor, surface, event);
 
   return TRUE;
 }
@@ -483,66 +502,14 @@ wakefield_compositor_scroll_event (GtkWidget      *widget,
                                    GdkEventScroll *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *surface;
 
-  wakefield_compositor_send_scroll (compositor, priv->seat.pointer.entered_surface, event);
+  surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
+
+  if (surface)
+    wakefield_compositor_send_scroll (compositor, surface, event);
 
   return TRUE;
-}
-
-static struct wl_resource *
-wakefield_compositor_get_topmost_surface (WakefieldCompositor *compositor,
-                                          int x,
-                                          int y)
-{
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *xdg_surface_resource;
-  int width, height;
-
-  wl_resource_for_each_reverse (xdg_surface_resource, &priv->xdg_surfaces)
-    {
-      struct wl_resource *surface_resource;
-      surface_resource = wakefield_xdg_surface_get_surface (xdg_surface_resource);
-      if (surface_resource != NULL)
-        {
-          wakefield_surface_get_current_size (surface_resource, &width, &height);
-
-          if (x >= 0 && x < width &&
-              x >= 0 && y < height)
-            return surface_resource;
-        }
-    }
-
-  return NULL;
-}
-
-static gboolean
-wakefield_compositor_send_enter_leave (WakefieldCompositor *compositor)
-{
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *topmost_surface;
-
-  topmost_surface = NULL;
-
-  if (priv->seat.pointer.entered_compositor)
-    topmost_surface = wakefield_compositor_get_topmost_surface (compositor,
-                                                                priv->seat.pointer.last_x,
-                                                                priv->seat.pointer.last_y);
-
-  if (topmost_surface != priv->seat.pointer.entered_surface)
-    {
-      wakefield_compositor_send_leave (compositor, priv->seat.pointer.entered_surface);
-
-      priv->seat.pointer.entered_surface = topmost_surface;
-
-      wakefield_compositor_send_enter (compositor,
-                                       priv->seat.pointer.entered_surface,
-                                       priv->seat.pointer.last_x,
-                                       priv->seat.pointer.last_y);
-      return TRUE;
-    }
-
-  return FALSE;
 }
 
 static gboolean
@@ -550,17 +517,12 @@ wakefield_compositor_motion_notify_event (GtkWidget      *widget,
                                           GdkEventMotion *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *surface;
 
-  priv->seat.pointer.last_x = event->x;
-  priv->seat.pointer.last_y = event->y;
+  surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
-  if (!wakefield_compositor_send_enter_leave (compositor))
-    {
-      wakefield_compositor_send_motion (compositor,
-                                        priv->seat.pointer.entered_surface,
-                                        event);
-    }
+  if (surface)
+    wakefield_compositor_send_motion (compositor, surface, event);
 
   return FALSE;
 }
@@ -570,13 +532,14 @@ wakefield_compositor_enter_notify_event (GtkWidget        *widget,
                                          GdkEventCrossing *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *surface;
 
-  priv->seat.pointer.entered_compositor = TRUE;
-  priv->seat.pointer.last_x = event->x;
-  priv->seat.pointer.last_y = event->y;
+  surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
-  wakefield_compositor_send_enter_leave (compositor);
+  if (surface)
+    wakefield_compositor_send_enter (compositor,
+                                     surface,
+                                     event);
 
   return FALSE;
 }
@@ -586,11 +549,12 @@ wakefield_compositor_leave_notify_event (GtkWidget        *widget,
                                          GdkEventCrossing *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
-  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *surface;
 
-  priv->seat.pointer.entered_compositor = FALSE;
+  surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
-  wakefield_compositor_send_enter_leave (compositor);
+  if (surface)
+    wakefield_compositor_send_leave (compositor, surface, event);
 
   return FALSE;
 }
@@ -786,15 +750,17 @@ wakefield_compositor_surface_destroyed (WakefieldCompositor *compositor,
                                         struct wl_resource  *surface)
 {
   gtk_widget_queue_draw (GTK_WIDGET (compositor));
-
-  wakefield_compositor_send_enter_leave (compositor);
 }
 
 void
 wakefield_compositor_surface_mapped (WakefieldCompositor *compositor,
                                      struct wl_resource  *surface)
 {
-  
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface = wakefield_surface_get_xdg_surface  (surface);
+
+  if (xdg_surface && gtk_widget_get_realized (GTK_WIDGET (compositor)))
+    wakefield_xdg_surface_realize (xdg_surface, priv->event_window);
 }
 
 static void
@@ -871,8 +837,6 @@ xdg_get_xdg_surface (struct wl_client *client,
   wl_surface_send_enter (surface_resource, output_resource);
 
   send_xdg_configure_request (compositor, xdg_surface);
-
-  wakefield_compositor_send_enter_leave (compositor);
 }
 
 static void
