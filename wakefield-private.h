@@ -25,9 +25,24 @@
 
 #include <wayland-server.h>
 
-struct wl_display *wakefield_compositor_get_display (WakefieldCompositor *compositor);
-void               wakefield_compositor_surface_destroyed (WakefieldCompositor *compositor,
-                                                           struct wl_resource  *surface);
+struct wl_display * wakefield_compositor_get_display            (WakefieldCompositor *compositor);
+void                wakefield_compositor_surface_destroyed      (WakefieldCompositor *compositor,
+                                                                 struct wl_resource  *surface);
+void                wakefield_compositor_send_enter             (WakefieldCompositor *compositor,
+                                                                 struct wl_resource  *surface,
+                                                                 double               x,
+                                                                 double               y);
+void                wakefield_compositor_send_leave             (WakefieldCompositor *compositor,
+                                                                 struct wl_resource  *surface);
+void                wakefield_compositor_send_button            (WakefieldCompositor *compositor,
+                                                                 struct wl_resource  *surface,
+                                                                 GdkEventButton      *event);
+void                wakefield_compositor_send_scroll            (WakefieldCompositor *compositor,
+                                                                 struct wl_resource  *surface,
+                                                                 GdkEventScroll      *event);
+void                wakefield_compositor_send_motion            (WakefieldCompositor *compositor,
+                                                                 struct wl_resource  *surface,
+                                                                 GdkEventMotion      *event);
 
 struct wl_resource *wakefield_surface_new  (WakefieldCompositor *compositor,
                                             struct wl_client    *client,

@@ -580,6 +580,80 @@ xdg_popup_draw (GtkWidget *widget,
   return TRUE;
 }
 
+static gboolean
+xdg_popup_enter_notify (GtkWidget        *widget,
+                        GdkEventCrossing *event,
+                        struct WakefieldXdgPopup *xdg_popup)
+{
+  if (xdg_popup->surface)
+    wakefield_compositor_send_enter (xdg_popup->surface->compositor,
+                                     xdg_popup->surface->resource,
+                                     event->x,
+                                     event->y);
+
+  return FALSE;
+}
+
+static gboolean
+xdg_popup_leave_notify (GtkWidget        *widget,
+                        GdkEventCrossing *event,
+                        struct WakefieldXdgPopup *xdg_popup)
+{
+  if (xdg_popup->surface)
+    wakefield_compositor_send_leave (xdg_popup->surface->compositor,
+                                     xdg_popup->surface->resource);
+
+  return FALSE;
+}
+
+static gboolean
+xdg_popup_motion_notify (GtkWidget        *widget,
+                         GdkEventMotion   *event,
+                         struct WakefieldXdgPopup *xdg_popup)
+{
+  if (xdg_popup->surface)
+    wakefield_compositor_send_motion (xdg_popup->surface->compositor,
+                                      xdg_popup->surface->resource,
+                                      event);
+
+  return FALSE;
+}
+
+static gboolean
+xdg_popup_button_press_event (GtkWidget      *widget,
+                              GdkEventButton *event,
+                              struct WakefieldXdgPopup *xdg_popup)
+{
+  if (xdg_popup->surface)
+    wakefield_compositor_send_button (xdg_popup->surface->compositor,
+                                      xdg_popup->surface->resource,
+                                      event);
+  return TRUE;
+}
+
+static gboolean
+xdg_popup_button_release_event (GtkWidget      *widget,
+                                GdkEventButton *event,
+                                struct WakefieldXdgPopup *xdg_popup)
+{
+  if (xdg_popup->surface)
+    wakefield_compositor_send_button (xdg_popup->surface->compositor,
+                                      xdg_popup->surface->resource,
+                                      event);
+  return TRUE;
+}
+
+static gboolean
+xdg_popup_scroll_event (GtkWidget      *widget,
+                        GdkEventScroll *event,
+                        struct WakefieldXdgPopup *xdg_popup)
+{
+  if (xdg_popup->surface)
+    wakefield_compositor_send_scroll (xdg_popup->surface->compositor,
+                                      xdg_popup->surface->resource,
+                                      event);
+  return TRUE;
+}
 
 struct wl_resource *
 wakefield_xdg_popup_new (WakefieldCompositor *compositor,
@@ -609,12 +683,35 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
   xdg_popup->parent_surface = parent_surface;
   xdg_popup->toplevel = gtk_window_new (GTK_WINDOW_POPUP);
   xdg_popup->drawing_area = gtk_drawing_area_new ();
+  gtk_widget_set_events (xdg_popup->drawing_area,
+                         GDK_POINTER_MOTION_MASK |
+                         GDK_BUTTON_PRESS_MASK |
+                         GDK_BUTTON_RELEASE_MASK |
+                         GDK_SCROLL_MASK |
+                         GDK_FOCUS_CHANGE_MASK |
+                         GDK_KEY_PRESS_MASK |
+                         GDK_KEY_RELEASE_MASK |
+                         GDK_ENTER_NOTIFY_MASK |
+                         GDK_LEAVE_NOTIFY_MASK |
+                         GDK_EXPOSURE_MASK);
   gtk_container_add (GTK_CONTAINER (xdg_popup->toplevel), xdg_popup->drawing_area);
   gtk_widget_show (xdg_popup->drawing_area);
   xdg_popup->x = x;
   xdg_popup->y = y;
 
   g_signal_connect (xdg_popup->drawing_area, "draw", G_CALLBACK (xdg_popup_draw),
+                    xdg_popup);
+  g_signal_connect (xdg_popup->drawing_area, "enter-notify-event", G_CALLBACK (xdg_popup_enter_notify),
+                    xdg_popup);
+  g_signal_connect (xdg_popup->drawing_area, "leave-notify-event", G_CALLBACK (xdg_popup_leave_notify),
+                    xdg_popup);
+  g_signal_connect (xdg_popup->drawing_area, "motion-notify-event", G_CALLBACK (xdg_popup_motion_notify),
+                    xdg_popup);
+  g_signal_connect (xdg_popup->drawing_area, "button-press-event", G_CALLBACK (xdg_popup_button_press_event),
+                    xdg_popup);
+  g_signal_connect (xdg_popup->drawing_area, "button-release-event", G_CALLBACK (xdg_popup_button_release_event),
+                    xdg_popup);
+  g_signal_connect (xdg_popup->drawing_area, "scroll-event", G_CALLBACK (xdg_popup_scroll_event),
                     xdg_popup);
 
   surface->xdg_popup = xdg_popup;
