@@ -1,0 +1,58 @@
+NULL=
+lib_LTLIBRARIES = libwakefield.la
+
+EXTRA_DIST = \
+	protocol/xdg-shell.xml		\
+	$(NULL)
+
+BUILT_SOURCES =				\
+	xdg-shell-server-protocol.h	\
+	xdg-shell-protocol.c		\
+	$(NULL)
+
+DISTCLEANFILES =			\
+	$(BUILT_SOURCES)		\
+	$(NULL)
+
+libwakefieldincludedir = $(includedir)/wakefield
+
+libwakefieldinclude_HEADERS =		\
+	wakefield-compositor.h		\
+	$(NULL)
+
+nodist_libwakefield_la_SOURCES =	\
+	$(BUILT_SOURCES)		\
+	$(NULL)
+
+libwakefield_la_SOURCES =		\
+	wakefield-private.h		\
+	wakefield-compositor.h		\
+	wakefield-compositor.c		\
+	wakefield-surface.c		\
+	wakefield-data-device.c		\
+	$(NULL)
+
+libwakefield_la_CFLAGS = $(AM_CFLAGS) $(GTK_CFLAGS)
+libwakefield_la_LIBADD = $(GTK_LIBS)
+
+%-protocol.c : $(srcdir)/protocol/%.xml
+	$(AM_V_GEN)$(WAYLAND_SCANNER) code < $< > $@
+	$(AM_V_GEN)$(SED) -i -e 's/WL_EXPORT //' $@
+
+%-server-protocol.h : $(srcdir)/protocol/%.xml
+	$(AM_V_GEN)$(WAYLAND_SCANNER) server-header < $< > $@
+
+%-client-protocol.h : $(srcdir)/protocol/%.xml
+	$(AM_V_GEN)$(WAYLAND_SCANNER) client-header < $< > $@
+
+noinst_PROGRAMS =			\
+	test-compositor			\
+	$(NULL)
+
+test_compositor_LDADD = libwakefield.la
+
+test_compositor_SOURCES =	\
+	test-compositor.c	\
+	$(NULL)
+
+test_compositor_CFLAGS = $(AM_CFLAGS) $(GTK_CFLAGS)
