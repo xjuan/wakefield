@@ -335,6 +335,11 @@ wl_surface_commit (struct wl_client *client,
 
   if (surface->xdg_surface)
     {
+      GtkAllocation allocation;
+
+      gtk_widget_get_allocation (GTK_WIDGET (surface->compositor), &allocation);
+
+      cairo_region_translate (surface->damage, allocation.x, allocation.y);
       gtk_widget_queue_draw_region (GTK_WIDGET (surface->compositor), surface->damage);
 
       if (surface->xdg_surface->window)
