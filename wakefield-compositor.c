@@ -29,11 +29,6 @@
 #include "wakefield-private.h"
 #include "xdg-shell-server-protocol.h"
 
-#define wl_resource_for_each_reverse(resource, list)				\
-	for (resource = 0, resource = wl_resource_from_link((list)->prev);	\
-	     wl_resource_get_link(resource) != (list);				\
-	     resource = wl_resource_from_link(wl_resource_get_link(resource)->prev))
-
 struct WakefieldPointer
 {
   struct wl_list resource_list;
