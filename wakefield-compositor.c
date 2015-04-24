@@ -607,7 +607,7 @@ wakefield_compositor_enter_notify_event (GtkWidget        *widget,
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   struct wl_resource *surface;
 
-  if (event->mode == GDK_CROSSING_GRAB || event->mode == GDK_CROSSING_UNGRAB)
+  if (event->mode == GDK_CROSSING_GRAB)
     return FALSE;
 
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
