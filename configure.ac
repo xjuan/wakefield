@@ -13,6 +13,11 @@ AC_SYS_LARGEFILE
 AC_PROG_CC
 AM_PROG_CC_C_O
 
+GETTEXT_PACKAGE=wakefield
+AC_SUBST(GETTEXT_PACKAGE)
+AC_DEFINE_UNQUOTED(GETTEXT_PACKAGE, "$GETTEXT_PACKAGE",
+		   [The prefix for our gettext translation domains.])
+
 changequote(,)dnl
 if test "x$GCC" = "xyes"; then
   WARN_CFLAGS="-Wall -Wstrict-prototypes -Werror=missing-prototypes \

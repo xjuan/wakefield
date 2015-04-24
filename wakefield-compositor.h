@@ -45,3 +45,12 @@ struct _WakefieldCompositorClass
 };
 
 GType wakefield_compositor_get_type (void) G_GNUC_CONST;
+
+WakefieldCompositor *wakefield_compositor_new              (void);
+const char *         wakefield_compositor_add_socket_auto  (WakefieldCompositor *compositor,
+                                                            GError              **error);
+gboolean             wakefield_compositor_add_socket       (WakefieldCompositor *compositor,
+                                                            const char          *name,
+                                                            GError              **error);
+int                  wakefield_compositor_create_client_fd (WakefieldCompositor *compositor,
+                                                            GError              **error);

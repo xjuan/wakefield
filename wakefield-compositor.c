@@ -21,9 +21,15 @@
  *     Alexander Larsson <alexl@redhat.com>
  */
 
+#include "config.h"
+
 #include <stdint.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <errno.h>
+
+#include <glib/gi18n-lib.h>
+#include <gio/gio.h>
 
 #include "wakefield-compositor.h"
 #include "wakefield-private.h"
@@ -1097,7 +1103,6 @@ static void
 wakefield_compositor_init (WakefieldCompositor *compositor)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  int fds[2];
 
   gtk_widget_set_has_window (GTK_WIDGET (compositor), FALSE);
 
@@ -1120,14 +1125,87 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
   wl_list_init (&priv->xdg_surfaces);
   wl_list_init (&priv->xdg_popups);
 
-  socketpair (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds);
-
-  /* XXX: For testing */
-  wl_display_add_socket_auto (priv->wl_display);
-
   /* Attach the wl_event_loop to ours */
   priv->wayland_source = wayland_event_source_new (priv->wl_display);
   g_source_attach (priv->wayland_source, NULL);
+}
+
+WakefieldCompositor *
+wakefield_compositor_new (void)
+{
+  return g_object_new (WAKEFIELD_TYPE_COMPOSITOR, NULL);
+}
+
+gboolean
+wakefield_compositor_add_socket (WakefieldCompositor *compositor,
+                                 const char *name,
+                                 GError **error)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  if (wl_display_add_socket (priv->wl_display, name) != 0)
+    {
+      int errsv = errno;
+
+      g_set_error (error,
+                   G_IO_ERROR,
+                   g_io_error_from_errno (errsv),
+                   _("Error adding wayland display '%s' socket: %s"),
+                   name ? name : "NULL",
+                   strerror (errsv));
+      return FALSE;
+    }
+
+  return TRUE;
+}
+
+
+const char *
+wakefield_compositor_add_socket_auto (WakefieldCompositor *compositor,
+                                      GError **error)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  const char *name;
+
+  name = wl_display_add_socket_auto (priv->wl_display);
+  if (name == NULL)
+    {
+      int errsv = errno;
+
+      g_set_error (error,
+                   G_IO_ERROR,
+                   g_io_error_from_errno (errsv),
+                   _("Error adding automatic socket: %s"),
+                   strerror (errsv));
+      return NULL;
+    }
+
+  return name;
+}
+
+int
+wakefield_compositor_create_client_fd (WakefieldCompositor *compositor,
+                                       GError **error)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_client *client;
+  int fds[2];
+
+  if (socketpair (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) != 0)
+    {
+      int errsv = errno;
+
+      g_set_error (error,
+                   G_IO_ERROR,
+                   g_io_error_from_errno (errsv),
+                   _("Error creating wayland socketpair: %s"),
+                   strerror (errsv));
+      return -1;
+    }
+
+  client = wl_client_create (priv->wl_display, fds[0]);
+
+  return fds[1];
 }
 
 static void

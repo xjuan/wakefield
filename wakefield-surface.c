@@ -21,6 +21,8 @@
  *     Alexander Larsson <alexl@redhat.com>
  */
 
+#include "config.h"
+
 #include <sys/time.h>
 
 #include "wakefield-private.h"
