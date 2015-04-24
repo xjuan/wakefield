@@ -413,13 +413,25 @@ destroy_pending_state (struct WakefieldSurfacePendingState *state)
   g_clear_pointer (&state->input_region, cairo_region_destroy);
 }
 
+/* This needs to be called both from wl_surface and xdg_[surface|popup] finalizer,
+   because destructors are called in random order during client disconnect */
+static void
+wl_surface_unmap (struct WakefieldSurface *surface)
+{
+  if (surface->mapped)
+    {
+      wakefield_compositor_surface_unmapped (surface->compositor, surface->resource);
+      surface->mapped = FALSE;
+    }
+}
+
+
 static void
 wl_surface_finalize (struct wl_resource *resource)
 {
   struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
 
-  if (surface->mapped)
-    wakefield_compositor_surface_unmapped (surface->compositor, surface->resource);
+  wl_surface_unmap (surface);
 
   if (surface->xdg_surface)
     surface->xdg_surface->surface = NULL;
@@ -669,6 +681,9 @@ wakefield_xdg_surface_unrealize (struct wl_resource *xdg_surface_resource)
   struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_surface_resource);
   struct WakefieldSurface *surface = xdg_surface->surface;
 
+  if (xdg_surface->surface)
+    wl_surface_unmap (xdg_surface->surface);
+
   if (xdg_surface->window)
     {
       if (surface != NULL)
@@ -717,6 +732,9 @@ static void
 xdg_popup_finalize (struct wl_resource *xdg_popup_resource)
 {
   struct WakefieldXdgPopup *xdg_popup = wl_resource_get_user_data (xdg_popup_resource);
+
+  if (xdg_popup->surface)
+    wl_surface_unmap (xdg_popup->surface);
 
   wl_list_remove (wl_resource_get_link (xdg_popup_resource));
 
