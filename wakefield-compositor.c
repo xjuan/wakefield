@@ -51,6 +51,11 @@ struct WakefieldPointer
   guint32 grab_serial;
 };
 
+struct WakefieldKeyboard
+{
+  struct wl_list resource_list;
+};
+
 struct WakefieldOutput
 {
   struct wl_list resource_list;
@@ -59,7 +64,7 @@ struct WakefieldOutput
 struct WakefieldSeat
 {
   struct WakefieldPointer pointer;
-  /* struct WakefieldKeyboard keyboard; */
+  struct WakefieldKeyboard keyboard;
 };
 
 struct WakefieldRegion
@@ -651,7 +656,7 @@ pointer_set_cursor (struct wl_client *client,
 {
 }
 
-static const struct wl_pointer_interface pointer_interface = {
+static const struct wl_pointer_interface pointer_implementation = {
   pointer_set_cursor,
   resource_release,
 };
@@ -666,7 +671,7 @@ seat_get_pointer (struct wl_client    *client,
   struct wl_resource *cr;
 
   cr = wl_resource_create (client, &wl_pointer_interface, wl_resource_get_version (seat_resource), id);
-  wl_resource_set_implementation (cr, &pointer_interface, pointer, unbind_resource);
+  wl_resource_set_implementation (cr, &pointer_implementation, pointer, unbind_resource);
   wl_list_insert (&pointer->resource_list, wl_resource_get_link (cr));
 }
 
@@ -677,11 +682,35 @@ wakefield_pointer_init (struct WakefieldPointer *pointer)
   pointer->cursor_surface = NULL;
 }
 
+static const struct wl_keyboard_interface keyboard_implementation = {
+  resource_release,
+};
+
+static void
+seat_get_keyboard (struct wl_client    *client,
+                   struct wl_resource  *seat_resource,
+                   uint32_t             id)
+{
+  struct WakefieldSeat *seat = wl_resource_get_user_data (seat_resource);
+  struct WakefieldKeyboard *keyboard = &seat->keyboard;
+  struct wl_resource *cr;
+
+  cr = wl_resource_create (client, &wl_keyboard_interface, wl_resource_get_version (seat_resource), id);
+  wl_resource_set_implementation (cr, &keyboard_implementation, keyboard, unbind_resource);
+  wl_list_insert (&keyboard->resource_list, wl_resource_get_link (cr));
+}
+
+static void
+wakefield_keyboard_init (struct WakefieldKeyboard *keyboard)
+{
+  wl_list_init (&keyboard->resource_list);
+}
+
 #define SEAT_VERSION 4
 
 static const struct wl_seat_interface seat_interface = {
   seat_get_pointer,
-  NULL, /* get_keyboard */
+  seat_get_keyboard, /* get_keyboard */
   NULL, /* get_touch */
 };
 
@@ -701,7 +730,7 @@ bind_seat (struct wl_client *client,
 
   cr = wl_resource_create (client, &wl_seat_interface, version, id);
   wl_resource_set_implementation (cr, &seat_interface, seat, wl_seat_destructor);
-  wl_seat_send_capabilities (cr, WL_SEAT_CAPABILITY_POINTER);
+  wl_seat_send_capabilities (cr, WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
   wl_seat_send_name (cr, "seat0");
 }
 
@@ -710,7 +739,7 @@ wakefield_seat_init (struct WakefieldSeat *seat,
                      struct wl_display    *wl_display)
 {
   wakefield_pointer_init (&seat->pointer);
-  /* wakefield_keyboard_init (&seat->keyboard); */
+  wakefield_keyboard_init (&seat->keyboard);
 
   wl_global_create (wl_display, &wl_seat_interface, SEAT_VERSION, seat, bind_seat);
 }
