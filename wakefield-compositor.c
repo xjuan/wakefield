@@ -346,6 +346,9 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
   uint32_t serial = wl_display_next_serial (priv->wl_display);
   guint32 button;
 
+  if (event->type == GDK_2BUTTON_PRESS || event->type == GDK_3BUTTON_PRESS)
+    return;
+
   button = convert_gdk_button_to_libinput (event->button);
 
   if (event->type == GDK_BUTTON_PRESS)
