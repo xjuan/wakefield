@@ -5,8 +5,8 @@
 *.typelib
 *.so
 test-compositor
-test-client
-test-client-2
+test-embedding
+test-embedded
 xdg-shell-protocol.c
 xdg-shell-server-protocol.h
 .deps/

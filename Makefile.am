@@ -47,6 +47,8 @@ libwakefield_la_LIBADD = $(GTK_LIBS)
 
 noinst_PROGRAMS =			\
 	test-compositor			\
+	test-embedding			\
+	test-embedded			\
 	$(NULL)
 
 test_compositor_LDADD = libwakefield.la
@@ -56,3 +58,21 @@ test_compositor_SOURCES =	\
 	$(NULL)
 
 test_compositor_CFLAGS = $(AM_CFLAGS) $(GTK_CFLAGS)
+
+test_embedding_LDADD = libwakefield.la
+
+test_embedding_SOURCES =	\
+	test-embedding.c	\
+	$(NULL)
+
+test_embedding_CFLAGS = $(AM_CFLAGS) $(GTK_CFLAGS)
+
+test_embedded_CFLAGS = $(AM_CFLAGS) $(GTK_CFLAGS)
+
+test_embedded_LDADD = libwakefield.la
+
+test_embedded_SOURCES =	\
+	test-embedded.c	\
+	$(NULL)
+
+test_embedded_CFLAGS = $(AM_CFLAGS) $(GTK_CFLAGS)
