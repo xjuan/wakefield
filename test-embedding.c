@@ -22,7 +22,7 @@ button_clicked (GtkButton *button,
   gtk_stack_add_titled (stack, GTK_WIDGET (compositor), name, name);
   gtk_widget_show (GTK_WIDGET (compositor));
 
-  fd = wakefield_compositor_create_client_fd (compositor, &error);
+  fd = wakefield_compositor_create_client_fd (compositor, (GDestroyNotify)gtk_widget_destroy, compositor, &error);
   if (error)
     {
       g_print ("error: %s\n", error->message);

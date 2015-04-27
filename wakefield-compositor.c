@@ -1286,8 +1286,24 @@ wakefield_compositor_add_socket_auto (WakefieldCompositor *compositor,
   return name;
 }
 
+typedef struct {
+  struct wl_listener listener;
+  GDestroyNotify destroy_notify;
+  gpointer user_data;
+} WakefieldClientDestroyListener;
+
+static void
+client_destroyed (struct wl_listener *listener, void *data)
+{
+  WakefieldClientDestroyListener *w_listener = (WakefieldClientDestroyListener *)listener;
+
+  w_listener->destroy_notify (w_listener->user_data);
+}
+
 int
 wakefield_compositor_create_client_fd (WakefieldCompositor *compositor,
+                                       GDestroyNotify destroy_notify,
+                                       gpointer user_data,
                                        GError **error)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
@@ -1307,6 +1323,16 @@ wakefield_compositor_create_client_fd (WakefieldCompositor *compositor,
     }
 
   client = wl_client_create (priv->wl_display, fds[0]);
+
+  if (destroy_notify)
+    {
+      WakefieldClientDestroyListener *listener = g_new0 (WakefieldClientDestroyListener, 1);
+      listener->listener.notify = client_destroyed;
+      listener->destroy_notify = destroy_notify;
+      listener->user_data = user_data;
+
+      wl_client_add_destroy_listener (client, &listener->listener);
+    }
 
   return fds[1];
 }

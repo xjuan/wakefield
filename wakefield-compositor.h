@@ -53,4 +53,6 @@ gboolean             wakefield_compositor_add_socket       (WakefieldCompositor 
                                                             const char          *name,
                                                             GError              **error);
 int                  wakefield_compositor_create_client_fd (WakefieldCompositor *compositor,
-                                                            GError              **error);
+                                                            GDestroyNotify       destroy_notify,
+                                                            gpointer             user_data,
+                                                            GError             **error);
