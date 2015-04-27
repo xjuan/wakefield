@@ -761,10 +761,7 @@ xdg_popup_enter_notify (GtkWidget        *widget,
                         GdkEventCrossing *event,
                         struct WakefieldXdgPopup *xdg_popup)
 {
-  if (event->mode == GDK_CROSSING_GRAB || event->mode == GDK_CROSSING_UNGRAB)
-    return FALSE;
-
-  if (xdg_popup->surface)
+  if (event->mode == GDK_CROSSING_NORMAL && xdg_popup->surface)
     wakefield_compositor_send_enter (xdg_popup->surface->compositor,
                                      xdg_popup->surface->resource,
                                      event);
@@ -777,10 +774,7 @@ xdg_popup_leave_notify (GtkWidget        *widget,
                         GdkEventCrossing *event,
                         struct WakefieldXdgPopup *xdg_popup)
 {
-  if (event->mode == GDK_CROSSING_GRAB || event->mode == GDK_CROSSING_UNGRAB)
-    return FALSE;
-
-  if (xdg_popup->surface)
+  if (event->mode == GDK_CROSSING_NORMAL && xdg_popup->surface)
     wakefield_compositor_send_leave (xdg_popup->surface->compositor,
                                      xdg_popup->surface->resource,
                                      event);

@@ -42,12 +42,20 @@ struct WakefieldPointer
 
   guint32 button_count;
 
+  /* This is set to the surface that has been sent the enter notify (and no leave).
+     Typically its the one with the pointer, except its always the grabbed surface
+     during an implicit grab */
   struct wl_resource *current_surface;
+  /* This is what we got told by gdk about the current state. The difference is
+     that we don't forward enter/leave events during an implicit grab */
+  struct wl_resource *current_gdk_surface;
 
   struct wl_client *grab_client;
   guint32 grab_button;
   GdkDevice *grab_device;
-  struct wl_resource *grab_xdg_popup;
+  GdkWindow *grab_window;
+  struct wl_resource *grab_initial_surface;
+  struct wl_resource *grab_popup_surface;
   guint32 grab_time;
   guint32 grab_serial;
 };
@@ -292,6 +300,35 @@ wakefield_compositor_get_pointer_for_client (WakefieldCompositor *compositor,
   return wl_resource_find_for_client (&priv->seat.pointer.resource_list, client);
 }
 
+static void
+send_enter (WakefieldCompositor *compositor, struct wl_resource  *surface, double x, double y)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *pointer_resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+
+  pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
+                                                                  wl_resource_get_client (surface));
+  if (pointer_resource)
+    wl_pointer_send_enter (pointer_resource, serial,
+                           surface,
+                           wl_fixed_from_double (x),
+                           wl_fixed_from_double (y));
+}
+
+static void
+send_leave (WakefieldCompositor *compositor, struct wl_resource  *surface)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *pointer_resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+
+  pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
+                                                                  wl_resource_get_client (surface));
+  if (pointer_resource)
+    wl_pointer_send_leave (pointer_resource, serial, surface);
+}
+
 static uint32_t
 convert_gdk_button_to_libinput (int gdk_button)
 {
@@ -312,14 +349,25 @@ wakefield_compositor_clear_grab (WakefieldCompositor *compositor)
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
 
-  if (pointer->grab_xdg_popup)
+  if (pointer->grab_popup_surface)
     gdk_device_ungrab (pointer->grab_device, GDK_CURRENT_TIME);
+  else
+    {
+      /* During a passive grab we may have not sent a leave event, send it now */
+      if (pointer->current_gdk_surface != pointer->current_surface)
+        {
+          g_assert (pointer->current_gdk_surface == NULL);
+          send_leave (compositor, pointer->current_surface);
+          pointer->current_surface = NULL;
+        }
+    }
 
   pointer->grab_button = 0;
-  pointer->grab_serial = 0;
-  pointer->grab_device = NULL;
   pointer->grab_client = NULL;
-  pointer->grab_xdg_popup = NULL;
+  pointer->grab_popup_surface = NULL;
+
+  /* We leave grab_device/window/serial around as we need these
+     to grant new popups, only zero when initial_surface is unmapped */
 }
 
 static gboolean
@@ -328,11 +376,26 @@ should_send_pointer_event (WakefieldCompositor *compositor)
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
 
-  /* We never deliver events outside a client-owned surface except when
-     there is an implicit grab (not popup grab, those are owner_events). */
-  return
-    pointer->current_surface != NULL ||
-    (pointer->grab_button != 0 && pointer->grab_xdg_popup == NULL);
+  return pointer->current_surface != NULL;
+}
+
+static gboolean
+ensure_surface_entered (WakefieldCompositor *compositor,
+                        struct wl_resource  *surface,
+                        double x, double y)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
+
+  if (pointer->current_surface != surface)
+    {
+      if (pointer->current_surface != NULL)
+        send_leave (compositor, pointer->current_surface);
+
+      pointer->current_surface = surface;
+
+      send_enter (compositor, surface, x, y);
+    }
 }
 
 void
@@ -353,33 +416,25 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
 
   if (event->type == GDK_BUTTON_PRESS)
     {
-      if (pointer->button_count == 0)
+      if (pointer->button_count == 0 && pointer->grab_popup_surface == NULL)
         {
           pointer->grab_button = button;
           pointer->grab_device = gdk_event_get_device ((GdkEvent *)event);
+          pointer->grab_window = event->window;
+          pointer->grab_initial_surface = surface;
           pointer->grab_client = wl_resource_get_client (surface);
           pointer->grab_time = event->time;
-      }
+        }
       pointer->button_count++;
     }
   else
     {
       pointer->button_count--;
-
-      if (pointer->button_count == 0)
-        {
-          if (pointer->grab_xdg_popup == NULL)
-            wakefield_compositor_clear_grab (compositor);
-          else if (pointer->grab_xdg_popup != NULL && priv->seat.pointer.current_surface == NULL)
-            {
-              wl_resource_for_each (xdg_popup_resource, &priv->xdg_popups)
-                wakefield_xdg_popup_close (xdg_popup_resource);
-            }
-        }
     }
 
-  if (surface != NULL && should_send_pointer_event (compositor))
+  if (surface != NULL)
     {
+      ensure_surface_entered (compositor, surface, event->x, event->y);
       pointer_resource = wakefield_compositor_get_pointer_for_client (compositor, wl_resource_get_client (surface));
       if (pointer_resource)
         wl_pointer_send_button (pointer_resource, serial,
@@ -390,6 +445,27 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
 
   if (pointer->button_count == 1 && event->type == GDK_BUTTON_PRESS)
     pointer->grab_serial = wl_display_get_serial (priv->wl_display);
+
+  if (pointer->button_count == 0 && event->type == GDK_BUTTON_RELEASE)
+    {
+      if (pointer->grab_popup_surface == NULL)
+        {
+          /* No explicit grab */
+
+          if (pointer->grab_button != 0)
+            wakefield_compositor_clear_grab (compositor);
+        }
+      else
+        {
+          /* Explicit grab */
+
+          if (priv->seat.pointer.current_surface == NULL)
+            {
+              wl_resource_for_each (xdg_popup_resource, &priv->xdg_popups)
+                wakefield_xdg_popup_close (xdg_popup_resource);
+            }
+        }
+    }
 }
 
 void
@@ -401,6 +477,8 @@ wakefield_compositor_send_scroll (WakefieldCompositor *compositor,
 
   if (surface == NULL)
     return;
+
+  ensure_surface_entered (compositor, surface, event->x, event->y);
 
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
@@ -462,6 +540,8 @@ wakefield_compositor_send_motion (WakefieldCompositor *compositor,
   if (surface == NULL)
     return;
 
+  ensure_surface_entered (compositor, surface, event->x, event->y);
+
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
   if (pointer_resource && should_send_pointer_event (compositor))
@@ -479,24 +559,23 @@ wakefield_compositor_send_enter (WakefieldCompositor *compositor,
                                  GdkEventCrossing *event)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
-  struct wl_resource *pointer_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
+  gboolean has_implicit_grab;
 
   if (surface == NULL)
     return;
 
-  g_assert (priv->seat.pointer.current_surface == NULL);
-  priv->seat.pointer.current_surface = surface;
+  pointer->current_gdk_surface = surface;
 
-  pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
-                                                                  wl_resource_get_client (surface));
-  if (pointer_resource && should_send_pointer_event (compositor))
-    {
-      wl_pointer_send_enter (pointer_resource, serial,
-                             surface,
-                             wl_fixed_from_double (event->x),
-                             wl_fixed_from_double (event->y));
-    }
+  /* During implicit grabs we get enter/leave to the grabbed window, but these
+     don't exist in wayland, so never send them */
+  has_implicit_grab = pointer->grab_button != 0 && pointer->grab_popup_surface == NULL;
+  if (has_implicit_grab)
+    return;
+
+  /* We may have ignored a leave event due to an implicit grab, so we need
+     to send it now before sending an enter to some other surface */
+  ensure_surface_entered (compositor, surface, event->x, event->y);
 }
 
 void
@@ -505,18 +584,32 @@ wakefield_compositor_send_leave (WakefieldCompositor *compositor,
                                  GdkEventCrossing *event)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *pointer_resource;
   uint32_t serial = wl_display_next_serial (priv->wl_display);
+  gboolean has_implicit_grab;
 
   if (surface == NULL)
     return;
 
-  g_assert (priv->seat.pointer.current_surface == surface);
-  priv->seat.pointer.current_surface = NULL;
+  pointer->current_gdk_surface = NULL;
+
+  /* During implicit grabs we get enter/leave to the grabbed window, but these
+     don't exist in wayland, so never send them */
+  has_implicit_grab = pointer->grab_button != 0 && pointer->grab_popup_surface == NULL;
+  if (has_implicit_grab)
+    return;
+
+  /* We may have left this surface already when/if it was unmapped */
+  if (pointer->current_surface == NULL)
+    return;
+
+  g_assert (pointer->current_surface == surface);
+  pointer->current_surface = NULL;
 
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
-  if (pointer_resource && should_send_pointer_event (compositor))
+  if (pointer_resource)
     {
       wl_pointer_send_leave (pointer_resource, serial,
                              surface);
@@ -607,12 +700,8 @@ wakefield_compositor_enter_notify_event (GtkWidget        *widget,
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   struct wl_resource *surface;
 
-  if (event->mode == GDK_CROSSING_GRAB)
-    return FALSE;
-
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
-
-  if (surface)
+  if (event->mode == GDK_CROSSING_NORMAL && surface)
     wakefield_compositor_send_enter (compositor,
                                      surface,
                                      event);
@@ -627,12 +716,9 @@ wakefield_compositor_leave_notify_event (GtkWidget        *widget,
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
   struct wl_resource *surface;
 
-  if (event->mode == GDK_CROSSING_GRAB || event->mode == GDK_CROSSING_UNGRAB)
-    return FALSE;
-
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
-  if (surface)
+  if (event->mode == GDK_CROSSING_NORMAL && surface)
     wakefield_compositor_send_leave (compositor, surface, event);
 
   return FALSE;
@@ -852,20 +938,35 @@ wakefield_compositor_surface_unmapped (WakefieldCompositor *compositor,
                                        struct wl_resource  *surface)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *xdg_surface = wakefield_surface_get_xdg_surface (surface);
   struct wl_resource *xdg_popup = wakefield_surface_get_xdg_popup (surface);
 
-  if (priv->seat.pointer.current_surface == surface)
-    priv->seat.pointer.current_surface = NULL;
+  if (pointer->grab_popup_surface == surface)
+    wakefield_compositor_clear_grab (compositor);
+
+  if (pointer->grab_initial_surface == surface)
+    {
+      if (pointer->grab_popup_surface == NULL &&
+          pointer->grab_button != 0)
+        wakefield_compositor_clear_grab (compositor);
+
+      pointer->grab_serial = 0;
+      pointer->grab_device = NULL;
+      pointer->grab_window = NULL;
+      pointer->grab_initial_surface = NULL;
+
+    }
+
+  if (pointer->current_surface == surface)
+    {
+      send_leave (compositor, surface);
+      pointer->current_surface = NULL;
+    }
 
   if (xdg_surface)
     gtk_widget_queue_draw (GTK_WIDGET (compositor));
 
-  if (xdg_popup != NULL &&
-      priv->seat.pointer.grab_xdg_popup == xdg_popup)
-    {
-      wakefield_compositor_clear_grab (compositor);
-    }
 }
 
 void
@@ -1025,10 +1126,9 @@ xdg_get_xdg_popup (struct wl_client *client,
   output_resource = wl_resource_find_for_client (&priv->output.resource_list, client);
   wl_surface_send_enter (surface_resource, output_resource);
 
-  if (pointer->grab_button != 0 &&
-      wakefield_xdg_popup_get_serial (xdg_popup) == pointer->grab_serial)
+  if (wakefield_xdg_popup_get_serial (xdg_popup) == pointer->grab_serial)
     {
-      pointer->grab_xdg_popup = xdg_popup;
+      pointer->grab_popup_surface = surface_resource;
       gdk_device_grab (pointer->grab_device,
                        wakefield_surface_get_window (parent_resource),
                        GDK_OWNERSHIP_NONE,
