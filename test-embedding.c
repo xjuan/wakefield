@@ -56,10 +56,7 @@ button_clicked (GtkButton *button,
 int
 main (int argc, char **argv)
 {
-  WakefieldCompositor *compositor;
   GtkWidget *window;
-  const char *name;
-  GError *error = NULL;
   GtkWidget *vbox, *hbox, *button, *stack, *switcher;
 
   gtk_init (&argc, &argv);

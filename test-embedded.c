@@ -5,9 +5,6 @@ int
 main (int argc, char **argv)
 {
   GtkWidget *window, *label, *vbox, *entry, *button;
-  const char *name;
-  const char *socket;
-  GError *error = NULL;
 
   gtk_init (&argc, &argv);
 
