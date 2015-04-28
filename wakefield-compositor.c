@@ -116,6 +116,11 @@ typedef struct _WakefieldCompositorPrivate WakefieldCompositorPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (WakefieldCompositor, wakefield_compositor, GTK_TYPE_WIDGET);
 
+#define wl_resource_for_each_reverse(resource, list)                   \
+	for (resource = 0, resource = wl_resource_from_link((list)->prev);	\
+	     wl_resource_get_link(resource) != (list);				\
+	     resource = wl_resource_from_link(wl_resource_get_link(resource)->prev))
+
 static void
 wakefield_compositor_realize (GtkWidget *widget)
 {
@@ -443,6 +448,11 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
     {
       if (pointer->button_count == 0 && pointer->grab_popup_surface == NULL)
         {
+          if (wakefield_surface_get_xdg_surface (surface) != NULL)
+            {
+              if (!gtk_widget_has_focus (GTK_WIDGET (compositor)))
+                gtk_widget_grab_focus (GTK_WIDGET (compositor));
+            }
           pointer->grab_button = button;
           pointer->grab_device = gdk_event_get_device ((GdkEvent *)event);
           pointer->grab_window = event->window;
@@ -641,6 +651,49 @@ wakefield_compositor_send_leave (WakefieldCompositor *compositor,
     }
 }
 
+static void
+wakefield_compositor_send_keyboard_enter (WakefieldCompositor *compositor,
+                                          struct wl_resource *surface)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
+  struct wl_resource *keyboard_resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+  struct wl_array keys;
+
+  g_assert (keyboard->focus == NULL);
+  keyboard->focus = surface;
+
+  wl_array_init (&keys);
+
+  keyboard_resource = wakefield_compositor_get_keyboard_for_client (compositor,
+                                                                   wl_resource_get_client (surface));
+  if (keyboard_resource)
+    wl_keyboard_send_enter (keyboard_resource, serial, surface, &keys);
+
+  wl_array_release (&keys);
+}
+
+static void
+wakefield_compositor_send_keyboard_leave (WakefieldCompositor *compositor,
+                                          struct wl_resource *surface)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
+  struct wl_resource *keyboard_resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+
+  g_assert (keyboard->focus == surface);
+  keyboard->focus = NULL;
+
+  keyboard_resource = wakefield_compositor_get_keyboard_for_client (compositor,
+                                                                    wl_resource_get_client (surface));
+  if (keyboard_resource)
+    wl_keyboard_send_leave (keyboard_resource, serial, surface);
+}
+
+
+
 static struct wl_resource *
 wakefield_compositor_get_xdg_surface_for_window (WakefieldCompositor *compositor,
                                                  GdkWindow *window)
@@ -657,6 +710,22 @@ wakefield_compositor_get_xdg_surface_for_window (WakefieldCompositor *compositor
   return NULL;
 }
 
+static struct wl_resource *
+wakefield_compositor_get_topmost_surface (WakefieldCompositor *compositor)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct wl_resource *xdg_surface_resource;
+
+  wl_resource_for_each_reverse (xdg_surface_resource, &priv->xdg_surfaces)
+    {
+      struct wl_resource *surface_resource;
+      surface_resource = wakefield_xdg_surface_get_surface (xdg_surface_resource);
+      if (surface_resource != NULL && wakefield_surface_is_mapped (surface_resource))
+        return surface_resource;
+    }
+
+  return NULL;
+}
 
 static gboolean
 wakefield_compositor_button_press_event (GtkWidget      *widget,
@@ -745,6 +814,78 @@ wakefield_compositor_leave_notify_event (GtkWidget        *widget,
 
   if (event->mode == GDK_CROSSING_NORMAL && surface)
     wakefield_compositor_send_leave (compositor, surface, event);
+
+  return FALSE;
+}
+
+static gboolean
+wakefield_compositor_focus_in_event (GtkWidget     *widget,
+                                     GdkEventFocus *event)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  struct wl_resource *surface;
+
+  surface = wakefield_compositor_get_topmost_surface (compositor);
+
+  if (surface)
+    wakefield_compositor_send_keyboard_enter (compositor, surface);
+
+  return FALSE;
+}
+
+static gboolean
+wakefield_compositor_focus_out_event (GtkWidget     *widget,
+                                      GdkEventFocus *event)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
+
+
+  if (keyboard->focus && wakefield_surface_get_xdg_surface (keyboard->focus))
+    wakefield_compositor_send_keyboard_leave (compositor, keyboard->focus);
+
+  return FALSE;
+}
+
+static gboolean
+wakefield_compositor_key_press_event (GtkWidget *widget,
+                                      GdkEventKey *event)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
+  struct wl_resource *keyboard_resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+
+  if (keyboard->focus != NULL)
+    {
+      keyboard_resource = wakefield_compositor_get_keyboard_for_client (compositor,
+                                                                        wl_resource_get_client (keyboard->focus));
+
+      wl_keyboard_send_key (keyboard_resource, serial, event->time, event->hardware_keycode - 8, WL_KEYBOARD_KEY_STATE_PRESSED);
+    }
+
+  return FALSE;
+}
+
+static gboolean
+wakefield_compositor_key_release_event (GtkWidget     *widget,
+                                        GdkEventKey *event)
+{
+  WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
+  struct wl_resource *keyboard_resource;
+  uint32_t serial = wl_display_next_serial (priv->wl_display);
+
+  if (keyboard->focus != NULL)
+    {
+      keyboard_resource = wakefield_compositor_get_keyboard_for_client (compositor,
+                                                                        wl_resource_get_client (keyboard->focus));
+
+      wl_keyboard_send_key (keyboard_resource, serial, event->time, event->hardware_keycode - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
+    }
 
   return FALSE;
 }
@@ -1115,8 +1256,20 @@ wakefield_compositor_surface_unmapped (WakefieldCompositor *compositor,
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
+  struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
   struct wl_resource *xdg_surface = wakefield_surface_get_xdg_surface (surface);
-  struct wl_resource *xdg_popup = wakefield_surface_get_xdg_popup (surface);
+
+  if (keyboard->focus == surface)
+    {
+      wakefield_compositor_send_keyboard_leave (compositor, surface);
+
+      if (gtk_widget_has_focus (GTK_WIDGET (compositor)))
+        {
+          struct wl_resource *topmost_surface = wakefield_compositor_get_topmost_surface (compositor);
+          if (topmost_surface)
+            wakefield_compositor_send_keyboard_enter (compositor, topmost_surface);
+        }
+    }
 
   if (pointer->grab_popup_surface == surface)
     wakefield_compositor_clear_grab (compositor);
@@ -1151,9 +1304,16 @@ wakefield_compositor_surface_mapped (WakefieldCompositor *compositor,
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct wl_resource *xdg_surface = wakefield_surface_get_xdg_surface  (surface);
+  struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
 
   if (xdg_surface && gtk_widget_get_realized (GTK_WIDGET (compositor)))
-    wakefield_xdg_surface_realize (xdg_surface, priv->event_window);
+    {
+      if (gtk_widget_has_focus (GTK_WIDGET (compositor)) &&
+          keyboard->focus == NULL)
+        wakefield_compositor_send_keyboard_enter (compositor, surface);
+
+      wakefield_xdg_surface_realize (xdg_surface, priv->event_window);
+    }
 }
 
 static void
@@ -1384,6 +1544,7 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
 
   gtk_widget_set_has_window (GTK_WIDGET (compositor), FALSE);
+  gtk_widget_set_can_focus (GTK_WIDGET (compositor), TRUE);
 
   priv->wl_display = wl_display_create ();
   wl_display_init_shm (priv->wl_display);
@@ -1547,6 +1708,10 @@ wakefield_compositor_class_init (WakefieldCompositorClass *klass)
   widget_class->button_release_event = wakefield_compositor_button_release_event;
   widget_class->motion_notify_event = wakefield_compositor_motion_notify_event;
   widget_class->state_flags_changed = wakefield_compositor_state_flags_changed;
+  widget_class->focus_in_event = wakefield_compositor_focus_in_event;
+  widget_class->focus_out_event = wakefield_compositor_focus_out_event;
+  widget_class->key_press_event = wakefield_compositor_key_press_event;
+  widget_class->key_release_event = wakefield_compositor_key_release_event;
 }
 
 /* Wayland GSource */

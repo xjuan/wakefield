@@ -428,8 +428,8 @@ wl_surface_unmap (struct WakefieldSurface *surface)
 {
   if (surface->mapped)
     {
-      wakefield_compositor_surface_unmapped (surface->compositor, surface->resource);
       surface->mapped = FALSE;
+      wakefield_compositor_surface_unmapped (surface->compositor, surface->resource);
     }
 }
 
