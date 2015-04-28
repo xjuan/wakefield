@@ -79,6 +79,22 @@ struct WakefieldKeyboard
   int keymap_fd;
   gsize keymap_size;
   gboolean has_x11_xkb;
+  xkb_mod_index_t shift_mod;
+  xkb_mod_index_t caps_mod;
+  xkb_mod_index_t ctrl_mod;
+  xkb_mod_index_t alt_mod;
+  xkb_mod_index_t mod2_mod;
+  xkb_mod_index_t mod3_mod;
+  xkb_mod_index_t super_mod;
+  xkb_mod_index_t mod5_mod;
+  xkb_led_index_t num_led;
+  xkb_led_index_t caps_led;
+  xkb_led_index_t scroll_led;
+
+  guint32 mods_depressed;
+  guint32 mods_latched;
+  guint32 mods_locked;
+  guint32 group;
 };
 
 struct WakefieldOutput
@@ -658,7 +674,6 @@ wakefield_compositor_send_keyboard_enter (WakefieldCompositor *compositor,
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
   struct wl_resource *keyboard_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
   struct wl_array keys;
 
   g_assert (keyboard->focus == NULL);
@@ -669,7 +684,15 @@ wakefield_compositor_send_keyboard_enter (WakefieldCompositor *compositor,
   keyboard_resource = wakefield_compositor_get_keyboard_for_client (compositor,
                                                                    wl_resource_get_client (surface));
   if (keyboard_resource)
-    wl_keyboard_send_enter (keyboard_resource, serial, surface, &keys);
+    {
+      wl_keyboard_send_modifiers (keyboard_resource,
+                                  wl_display_next_serial (priv->wl_display),
+                                  keyboard->mods_depressed,
+                                  keyboard->mods_latched,
+                                  keyboard->mods_locked,
+                                  keyboard->group);
+      wl_keyboard_send_enter (keyboard_resource, wl_display_next_serial (priv->wl_display), surface, &keys);
+    }
 
   wl_array_release (&keys);
 }
@@ -848,6 +871,51 @@ wakefield_compositor_focus_out_event (GtkWidget     *widget,
   return FALSE;
 }
 
+static void
+update_modifier_state (WakefieldCompositor *compositor, struct wl_resource *keyboard_resource, GdkEventKey *event)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldKeyboard *keyboard = &priv->seat.keyboard;
+  guint32 old_mods_depressed = keyboard->mods_depressed;
+  guint32 old_mods_latched = keyboard->mods_latched;
+  guint32 old_mods_locked = keyboard->mods_locked;
+  guint32 old_group = keyboard->group;
+
+  keyboard->mods_depressed = 0;
+  keyboard->mods_latched = 0;
+  keyboard->mods_locked = 0;
+  keyboard->group = event->group;
+
+  if (event->state & GDK_SHIFT_MASK)
+    keyboard->mods_depressed |= 1 << keyboard->shift_mod;
+  if (event->state & GDK_LOCK_MASK)
+    keyboard->mods_depressed |= 1 << keyboard->caps_mod;
+  if (event->state & GDK_CONTROL_MASK)
+    keyboard->mods_depressed |= 1 << keyboard->ctrl_mod;
+  if (event->state & GDK_MOD1_MASK)
+    keyboard->mods_depressed |= 1 << keyboard->alt_mod;
+  if (event->state & GDK_MOD2_MASK)
+    keyboard->mods_depressed |= 1 << keyboard->mod2_mod;
+  if (event->state & GDK_MOD3_MASK)
+    keyboard->mods_depressed |= 1 << keyboard->mod3_mod;
+  if (event->state & GDK_MOD4_MASK)
+    keyboard->mods_depressed |= 1 << keyboard->super_mod;
+  if (event->state & GDK_MOD5_MASK)
+    keyboard->mods_depressed |= 1 << keyboard->mod5_mod;
+
+
+  if (old_mods_depressed != keyboard->mods_depressed ||
+      old_mods_latched != keyboard->mods_latched ||
+      old_mods_locked != keyboard->mods_locked ||
+      old_group != keyboard->group)
+    wl_keyboard_send_modifiers (keyboard_resource,
+                                wl_display_next_serial (priv->wl_display),
+                                keyboard->mods_depressed,
+                                keyboard->mods_latched,
+                                keyboard->mods_locked,
+                                keyboard->group);
+}
+
 static gboolean
 wakefield_compositor_key_press_event (GtkWidget *widget,
                                       GdkEventKey *event)
@@ -863,7 +931,9 @@ wakefield_compositor_key_press_event (GtkWidget *widget,
       keyboard_resource = wakefield_compositor_get_keyboard_for_client (compositor,
                                                                         wl_resource_get_client (keyboard->focus));
 
+      update_modifier_state (compositor, keyboard_resource, event);
       wl_keyboard_send_key (keyboard_resource, serial, event->time, event->hardware_keycode - 8, WL_KEYBOARD_KEY_STATE_PRESSED);
+
     }
 
   return FALSE;
@@ -884,6 +954,7 @@ wakefield_compositor_key_release_event (GtkWidget     *widget,
       keyboard_resource = wakefield_compositor_get_keyboard_for_client (compositor,
                                                                         wl_resource_get_client (keyboard->focus));
 
+      update_modifier_state (compositor, keyboard_resource, event);
       wl_keyboard_send_key (keyboard_resource, serial, event->time, event->hardware_keycode - 8, WL_KEYBOARD_KEY_STATE_RELEASED);
     }
 
@@ -1071,6 +1142,20 @@ update_keymap (WakefieldCompositor *compositor,
             }
           free (str);
         }
+
+      keyboard->shift_mod = xkb_keymap_mod_get_index (keymap, XKB_MOD_NAME_SHIFT);
+      keyboard->caps_mod = xkb_keymap_mod_get_index (keymap, XKB_MOD_NAME_CAPS);
+      keyboard->ctrl_mod = xkb_keymap_mod_get_index (keymap, XKB_MOD_NAME_CTRL);
+      keyboard->alt_mod = xkb_keymap_mod_get_index (keymap, XKB_MOD_NAME_ALT);
+      keyboard->mod2_mod = xkb_keymap_mod_get_index (keymap, "Mod2");
+      keyboard->mod3_mod = xkb_keymap_mod_get_index (keymap, "Mod3");
+      keyboard->super_mod = xkb_keymap_mod_get_index (keymap, XKB_MOD_NAME_LOGO);
+      keyboard->mod5_mod = xkb_keymap_mod_get_index (keymap, "Mod5");
+
+      keyboard->num_led = xkb_keymap_led_get_index (keymap, XKB_LED_NAME_NUM);
+      keyboard->caps_led = xkb_keymap_led_get_index (keymap, XKB_LED_NAME_CAPS);
+      keyboard->scroll_led = xkb_keymap_led_get_index (keymap, XKB_LED_NAME_SCROLL);
+
       xkb_keymap_unref (keymap);
     }
 

@@ -8,6 +8,7 @@ main (int argc, char **argv)
   GtkWidget *window;
   const char *name;
   GError *error = NULL;
+  GtkWidget *vbox, *entry;
 
   gtk_init (&argc, &argv);
 
@@ -32,7 +33,17 @@ main (int argc, char **argv)
 
   g_print ("Listening on wayland display %s\n", name);
 
-  gtk_container_add (GTK_CONTAINER (window), GTK_WIDGET (compositor));
+  vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
+  gtk_container_add (GTK_CONTAINER (window), GTK_WIDGET (vbox));
+
+  if (1)
+  gtk_box_pack_start (GTK_BOX (vbox),
+                      gtk_entry_new (),
+                      FALSE, FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (vbox),
+                      GTK_WIDGET (compositor),
+                      TRUE, TRUE, 0);
+
   gtk_widget_show_all (window);
 
   gtk_main ();
