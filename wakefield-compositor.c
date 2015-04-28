@@ -28,6 +28,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include <glib/gi18n-lib.h>
 #include <gio/gio.h>
@@ -403,7 +404,7 @@ should_send_pointer_event (WakefieldCompositor *compositor)
   return pointer->current_surface != NULL;
 }
 
-static gboolean
+static void
 ensure_surface_entered (WakefieldCompositor *compositor,
                         struct wl_resource  *surface,
                         double x, double y)
@@ -827,7 +828,6 @@ get_keymap (WakefieldCompositor *compositor,
             struct WakefieldKeyboard *keyboard)
 {
   GdkDisplay *display = gtk_widget_get_display (GTK_WIDGET (compositor));
-  struct xkb_keymap *keymap = NULL;
 
 #if defined(GDK_WINDOWING_X11)
   if (GDK_IS_X11_DISPLAY (display) && keyboard->has_x11_xkb)
@@ -883,7 +883,7 @@ create_anonymous_file (gsize size)
 
 static void
 write_all (int           fd,
-           const guint8* buf,
+           const char*    buf,
            gsize         len)
 {
   while (len > 0)
