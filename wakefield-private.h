@@ -62,6 +62,7 @@ struct wl_resource * wakefield_surface_get_xdg_surface  (struct wl_resource  *su
 struct wl_resource * wakefield_surface_get_xdg_popup    (struct wl_resource  *surface_resource);
 WakefieldSurfaceRole wakefield_surface_get_role         (struct wl_resource  *surface_resource);
 GdkWindow *          wakefield_surface_get_window       (struct wl_resource  *surface_resource);
+gboolean             wakefield_surface_is_mapped        (struct wl_resource  *surface_resource);
 
 struct wl_resource *wakefield_xdg_surface_new (struct wl_client   *client,
                                                struct wl_resource *shell_resource,

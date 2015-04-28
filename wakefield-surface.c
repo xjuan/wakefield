@@ -106,6 +106,14 @@ wakefield_surface_get_role (struct wl_resource  *surface_resource)
   return WAKEFIELD_SURFACE_ROLE_NONE;
 }
 
+gboolean
+wakefield_surface_is_mapped (struct wl_resource  *surface_resource)
+{
+  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+
+  return surface->mapped;
+}
+
 GdkWindow *
 wakefield_surface_get_window (struct wl_resource  *surface_resource)
 {
