@@ -872,6 +872,15 @@ wakefield_xdg_popup_close (struct wl_resource *xdg_popup_resource)
   xdg_popup_send_popup_done (xdg_popup_resource);
 }
 
+static GdkWindow *
+get_toplevel (struct WakefieldSurface *surface)
+{
+  if (surface->xdg_popup)
+    return gtk_widget_get_window (surface->xdg_popup->toplevel);
+  else
+    return surface->xdg_surface->window;
+}
+
 struct wl_resource *
 wakefield_xdg_popup_new (WakefieldCompositor *compositor,
                          struct wl_client   *client,
@@ -885,11 +894,18 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
   struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   struct WakefieldSurface *parent_surface = wl_resource_get_user_data (parent_resource);
   struct WakefieldXdgPopup *xdg_popup;
+  GdkWindow *popup_window;
 
   xdg_popup = g_slice_new0 (struct WakefieldXdgPopup);
   xdg_popup->surface = surface;
   xdg_popup->parent_surface = parent_surface;
+
   xdg_popup->toplevel = gtk_window_new (GTK_WINDOW_POPUP);
+  gtk_widget_realize (xdg_popup->toplevel);
+  popup_window = gtk_widget_get_window (xdg_popup->toplevel);
+  gdk_window_set_transient_for (popup_window, get_toplevel (parent_surface));
+  gdk_window_set_type_hint (popup_window, GDK_WINDOW_TYPE_HINT_POPUP_MENU);
+
   xdg_popup->drawing_area = gtk_drawing_area_new ();
   gtk_widget_set_events (xdg_popup->drawing_area,
                          GDK_POINTER_MOTION_MASK |
