@@ -24,6 +24,7 @@
 #include "config.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <errno.h>
@@ -34,6 +35,14 @@
 #include "wakefield-compositor.h"
 #include "wakefield-private.h"
 #include "xdg-shell-server-protocol.h"
+
+#include <xkbcommon/xkbcommon.h>
+
+#if defined(GDK_WINDOWING_X11)
+#include <xkbcommon/xkbcommon-x11.h>
+#include <gdk/gdkx.h>
+#include <X11/Xlib-xcb.h>
+#endif
 
 struct WakefieldPointer
 {
@@ -63,6 +72,12 @@ struct WakefieldPointer
 struct WakefieldKeyboard
 {
   struct wl_list resource_list;
+  struct wl_resource *focus;
+  struct xkb_context *context;
+  struct xkb_keymap *keymap;
+  int keymap_fd;
+  gsize keymap_size;
+  gboolean has_x11_xkb;
 };
 
 struct WakefieldOutput
@@ -298,6 +313,15 @@ wakefield_compositor_get_pointer_for_client (WakefieldCompositor *compositor,
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
 
   return wl_resource_find_for_client (&priv->seat.pointer.resource_list, client);
+}
+
+static struct wl_resource *
+wakefield_compositor_get_keyboard_for_client (WakefieldCompositor *compositor,
+                                              struct wl_client *client)
+{
+  WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+
+  return wl_resource_find_for_client (&priv->seat.keyboard.resource_list, client);
 }
 
 static void
@@ -788,12 +812,163 @@ seat_get_keyboard (struct wl_client    *client,
   cr = wl_resource_create (client, &wl_keyboard_interface, wl_resource_get_version (seat_resource), id);
   wl_resource_set_implementation (cr, &keyboard_implementation, keyboard, unbind_resource);
   wl_list_insert (&keyboard->resource_list, wl_resource_get_link (cr));
+
+  if (keyboard->keymap_fd != -1)
+    {
+      wl_keyboard_send_keymap (cr,
+                               WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
+                               keyboard->keymap_fd,
+                               keyboard->keymap_size);
+    }
+}
+
+static struct xkb_keymap *
+get_keymap (WakefieldCompositor *compositor,
+            struct WakefieldKeyboard *keyboard)
+{
+  GdkDisplay *display = gtk_widget_get_display (GTK_WIDGET (compositor));
+  struct xkb_keymap *keymap = NULL;
+
+#if defined(GDK_WINDOWING_X11)
+  if (GDK_IS_X11_DISPLAY (display) && keyboard->has_x11_xkb)
+    {
+      Display *xdisplay = gdk_x11_display_get_xdisplay (display);
+      xcb_connection_t *conn = XGetXCBConnection (xdisplay);
+      int32_t core_id = xkb_x11_get_core_keyboard_device_id (conn);
+
+      return xkb_x11_keymap_new_from_device (keyboard->context,
+                                             conn,
+                                             core_id,
+                                             XKB_KEYMAP_COMPILE_NO_FLAGS);
+    }
+#endif
+
+  return NULL;
+}
+
+static int
+create_anonymous_file (gsize size)
+{
+  char *tmpname;
+  int fd;
+  int ret;
+
+  tmpname = g_build_filename (g_get_user_runtime_dir (), "/weston-shared-XXXXXX", NULL);
+  fd = g_mkstemp (tmpname);
+  unlink (tmpname);
+  free (tmpname);
+
+  if (fd < 0)
+    return -1;
+
+#ifdef HAVE_POSIX_FALLOCATE
+  ret = posix_fallocate (fd, 0, size);
+  if (ret != 0)
+    {
+      close (fd);
+      errno = ret;
+      return -1;
+    }
+#else
+  ret = ftruncate (fd, size);
+  if (ret < 0)
+    {
+      close (fd);
+      return -1;
+    }
+#endif
+
+  return fd;
 }
 
 static void
-wakefield_keyboard_init (struct WakefieldKeyboard *keyboard)
+write_all (int           fd,
+           const guint8* buf,
+           gsize         len)
 {
+  while (len > 0)
+    {
+      gssize bytes_written = write (fd, buf, len);
+      if (bytes_written < 0)
+        g_error ("Failed to write to fd %d: %s",
+                 fd, strerror (errno));
+      buf += bytes_written;
+      len -= bytes_written;
+    }
+}
+
+static void
+update_keymap (WakefieldCompositor *compositor,
+               struct WakefieldKeyboard *keyboard)
+{
+  struct wl_resource *keyboard_resource;
+  struct xkb_keymap *keymap;
+  char *str;
+  gsize size;
+
+  if (keyboard->keymap)
+    xkb_keymap_unref (keyboard->keymap);
+  keyboard->keymap = NULL;
+  if (keyboard->keymap_fd != -1)
+    close (keyboard->keymap_fd);
+  keyboard->keymap_fd = -1;
+  keyboard->keymap_size = 0;
+
+  keymap = get_keymap (compositor, keyboard);
+  if (keymap)
+    {
+      str = xkb_keymap_get_as_string (keymap, XKB_KEYMAP_FORMAT_TEXT_V1);
+      if (str)
+        {
+          size = strlen (str);
+          keyboard->keymap_fd = create_anonymous_file (size);
+          if (keyboard->keymap_fd != -1)
+            {
+              write_all (keyboard->keymap_fd, str, size);
+              keyboard->keymap = xkb_keymap_ref (keymap);
+              keyboard->keymap_size = size;
+            }
+          free (str);
+        }
+      xkb_keymap_unref (keymap);
+    }
+
+  if (keyboard->keymap_fd != -1)
+    {
+      wl_resource_for_each (keyboard_resource, &keyboard->resource_list)
+        wl_keyboard_send_keymap (keyboard_resource,
+                                 WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
+                                 keyboard->keymap_fd,
+                                 keyboard->keymap_size);
+    }
+}
+
+static void
+wakefield_keyboard_init (WakefieldCompositor *compositor,
+                         struct WakefieldKeyboard *keyboard)
+{
+  GdkDisplay *display = gtk_widget_get_display (GTK_WIDGET (compositor));
+
   wl_list_init (&keyboard->resource_list);
+
+  keyboard->context = xkb_context_new (XKB_CONTEXT_NO_FLAGS);
+
+#if defined(GDK_WINDOWING_X11)
+  if (GDK_IS_X11_DISPLAY (display))
+    {
+      Display *xdisplay = gdk_x11_display_get_xdisplay (display);
+      xcb_connection_t *conn = XGetXCBConnection (xdisplay);
+
+      keyboard->has_x11_xkb =
+        xkb_x11_setup_xkb_extension (conn,
+                                     XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION,
+                                     0,
+                                     NULL, NULL, NULL, NULL);
+    }
+#endif
+
+  keyboard->keymap_fd = -1;
+  update_keymap (compositor, keyboard);
 }
 
 #define SEAT_VERSION 4
@@ -825,11 +1000,12 @@ bind_seat (struct wl_client *client,
 }
 
 static void
-wakefield_seat_init (struct WakefieldSeat *seat,
+wakefield_seat_init (WakefieldCompositor *compositor,
+                     struct WakefieldSeat *seat,
                      struct wl_display    *wl_display)
 {
   wakefield_pointer_init (&seat->pointer);
-  wakefield_keyboard_init (&seat->keyboard);
+  wakefield_keyboard_init (compositor, &seat->keyboard);
 
   wl_global_create (wl_display, &wl_seat_interface, SEAT_VERSION, seat, bind_seat);
 }
@@ -1221,7 +1397,7 @@ wakefield_compositor_init (WakefieldCompositor *compositor)
 
   priv->data_device = wakefield_data_device_new (compositor);
 
-  wakefield_seat_init (&priv->seat, priv->wl_display);
+  wakefield_seat_init (compositor, &priv->seat, priv->wl_display);
   wakefield_output_init (compositor);
 
   wl_list_init (&priv->surfaces);

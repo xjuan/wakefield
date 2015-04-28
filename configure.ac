@@ -30,13 +30,28 @@ fi
 changequote([,])dnl
 AC_SUBST(WARN_CFLAGS)
 
+AC_CHECK_FUNCS(posix_fallocate)
+
 # Initialize libtool
 LT_PREREQ([2.2.4])
 LT_INIT([disable-static])
 
 PKG_PROG_PKG_CONFIG
 
-PKG_CHECK_MODULES(GTK, gtk+-3.0 wayland-server wayland-client)
+EXTRA_REQS=
+
+gdk_targets=`$PKG_CONFIG --variable=targets gdk-3.0`
+for target in $gdk_targets;
+do
+        case "$target" in
+             x11)
+                   EXTRA_REQS="$EXTRA_REQS xkbcommon-x11 x11-xcb"
+                   ;;
+        esac
+done
+
+
+PKG_CHECK_MODULES(GTK, gtk+-3.0 wayland-server wayland-client xkbcommon $EXTRA_REQS)
 
 AC_PATH_PROG([WAYLAND_SCANNER],[wayland-scanner],[no])
 AS_IF([test "x$WAYLAND_SCANNER" = "xno"],
