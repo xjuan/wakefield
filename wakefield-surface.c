@@ -61,6 +61,8 @@ struct _WakefieldSurface
   WakefieldCompositor *compositor;
   struct wl_resource *resource;
 
+  WakefieldSurfaceRole role;
+
   struct WakefieldXdgSurface *xdg_surface;
   struct WakefieldXdgPopup *xdg_popup;
 
@@ -117,13 +119,19 @@ wakefield_surface_get_role (struct wl_resource  *surface_resource)
 {
   WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
-  if (surface->xdg_surface)
-    return WAKEFIELD_SURFACE_ROLE_XDG_SURFACE;
+  return surface->role;
+}
 
-  if (surface->xdg_popup)
-    return WAKEFIELD_SURFACE_ROLE_XDG_POPUP;
+void
+wakefield_surface_set_role (struct wl_resource *surface_resource,
+                            WakefieldSurfaceRole role)
+{
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
-  return WAKEFIELD_SURFACE_ROLE_NONE;
+  g_assert (surface->role == WAKEFIELD_SURFACE_ROLE_NONE ||
+            surface->role == role);
+
+  surface->role = role;
 }
 
 gboolean
@@ -734,6 +742,9 @@ wakefield_xdg_surface_new (struct wl_client *client,
   WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   struct WakefieldXdgSurface *xdg_surface;
 
+  wakefield_surface_set_role (surface_resource,
+                              WAKEFIELD_SURFACE_ROLE_XDG_SURFACE);
+
   xdg_surface = g_slice_new0 (struct WakefieldXdgSurface);
   xdg_surface->surface = surface;
 
@@ -915,6 +926,9 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
   WakefieldSurface *parent_surface = wl_resource_get_user_data (parent_resource);
   struct WakefieldXdgPopup *xdg_popup;
   GdkWindow *popup_window;
+
+  wakefield_surface_set_role (surface_resource,
+                              WAKEFIELD_SURFACE_ROLE_XDG_SURFACE);
 
   xdg_popup = g_slice_new0 (struct WakefieldXdgPopup);
   xdg_popup->surface = surface;
