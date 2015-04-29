@@ -636,8 +636,6 @@ wakefield_compositor_send_leave (WakefieldCompositor *compositor,
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
-  struct wl_resource *pointer_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
   gboolean has_implicit_grab;
 
   if (surface == NULL)
@@ -658,13 +656,7 @@ wakefield_compositor_send_leave (WakefieldCompositor *compositor,
   g_assert (pointer->current_surface == surface);
   pointer->current_surface = NULL;
 
-  pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
-                                                                  wl_resource_get_client (surface));
-  if (pointer_resource)
-    {
-      wl_pointer_send_leave (pointer_resource, serial,
-                             surface);
-    }
+  send_leave (compositor, surface);
 }
 
 static void
