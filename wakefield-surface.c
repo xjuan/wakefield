@@ -23,6 +23,7 @@
 
 #include "config.h"
 
+#include <string.h>
 #include <sys/time.h>
 
 #include "wakefield-private.h"
@@ -35,7 +36,6 @@
 #define WAKEFIELD_IS_SURFACE_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass),  WAKEFIELD_TYPE_SURFACE))
 #define WAKEFIELD_SURFACE_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),  WAKEFIELD_TYPE_SURFACE, WakefieldSurfaceClass))
 
-typedef struct _WakefieldSurface WakefieldSurface;
 typedef struct _WakefieldSurfaceClass WakefieldSurfaceClass;
 
 struct _WakefieldSurfaceClass
@@ -44,6 +44,14 @@ struct _WakefieldSurfaceClass
 };
 
 GType wakefield_surface_get_type (void) G_GNUC_CONST;
+
+enum {
+  COMMITTED,
+
+  LAST_SIGNAL
+};
+
+static guint signals[LAST_SIGNAL];
 
 struct WakefieldSurfacePendingState
 {
@@ -193,6 +201,51 @@ get_time (void)
   struct timeval tv;
   gettimeofday (&tv, NULL);
   return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
+WakefieldCompositor *
+wakefield_surface_get_compositor (WakefieldSurface *surface)
+{
+  return surface->compositor;
+}
+
+cairo_surface_t *
+wakefield_surface_create_cairo_surface (WakefieldSurface *surface)
+{
+  struct wl_shm_buffer *shm_buffer;
+  cairo_surface_t *cr_surface = NULL;
+
+  shm_buffer = wl_shm_buffer_get (surface->current.buffer);
+  if (shm_buffer)
+    {
+      uint8_t *shm_pixels = wl_shm_buffer_get_data (shm_buffer);
+      cairo_format_t format =
+        cairo_format_for_wl_shm_format (wl_shm_buffer_get_format (shm_buffer));
+      int width = wl_shm_buffer_get_width (shm_buffer);
+      int height = wl_shm_buffer_get_height (shm_buffer);
+      int shm_stride = wl_shm_buffer_get_stride (shm_buffer);
+      int cr_stride;
+      uint8_t *cr_pixels;
+      int y;
+
+      cr_surface = cairo_image_surface_create (format, width, height);
+      cr_pixels = cairo_image_surface_get_data (cr_surface);
+      cr_stride = cairo_image_surface_get_stride (cr_surface);
+      wl_shm_buffer_begin_access (shm_buffer);
+      for (y = 0; y < height; y++)
+        {
+          memcpy (cr_pixels + y * cr_stride,
+                  shm_pixels + y * shm_stride,
+                  MIN (cr_stride, shm_stride));
+        }
+      wl_shm_buffer_end_access (shm_buffer);
+      cairo_surface_set_device_scale (cr_surface,
+                                      surface->current.scale,
+                                      surface->current.scale);
+      cairo_surface_mark_dirty (cr_surface);
+    }
+
+  return cr_surface;
 }
 
 void
@@ -421,6 +474,8 @@ wl_surface_commit (struct wl_client *client,
       surface->mapped = TRUE;
       wakefield_compositor_surface_mapped (surface->compositor, surface->resource);
     }
+
+  g_signal_emit (surface, signals[COMMITTED], 0);
 }
 
 static void
@@ -989,4 +1044,12 @@ wakefield_surface_init (WakefieldSurface *surface)
 static void
 wakefield_surface_class_init (WakefieldSurfaceClass *klass)
 {
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  signals[COMMITTED] = g_signal_new ("committed",
+                                     G_TYPE_FROM_CLASS (object_class),
+                                     G_SIGNAL_RUN_FIRST,
+                                     0,
+                                     NULL, NULL, NULL,
+                                     G_TYPE_NONE, 0);
 }

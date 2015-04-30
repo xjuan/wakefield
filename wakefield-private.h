@@ -25,6 +25,8 @@
 
 #include <wayland-server.h>
 
+typedef struct _WakefieldSurface WakefieldSurface;
+
 struct wl_display * wakefield_compositor_get_display            (WakefieldCompositor *compositor);
 void                wakefield_compositor_surface_unmapped       (WakefieldCompositor *compositor,
                                                                  struct wl_resource  *surface);
@@ -49,7 +51,8 @@ void                wakefield_compositor_send_motion            (WakefieldCompos
 typedef enum {
   WAKEFIELD_SURFACE_ROLE_NONE,
   WAKEFIELD_SURFACE_ROLE_XDG_SURFACE,
-  WAKEFIELD_SURFACE_ROLE_XDG_POPUP
+  WAKEFIELD_SURFACE_ROLE_XDG_POPUP,
+  WAKEFIELD_SURFACE_ROLE_POINTER_CURSOR,
 } WakefieldSurfaceRole;
 
 struct wl_resource * wakefield_surface_new              (WakefieldCompositor *compositor,
@@ -65,6 +68,9 @@ void                 wakefield_surface_set_role         (struct wl_resource *sur
                                                          WakefieldSurfaceRole role);
 GdkWindow *          wakefield_surface_get_window       (struct wl_resource  *surface_resource);
 gboolean             wakefield_surface_is_mapped        (struct wl_resource  *surface_resource);
+
+WakefieldCompositor *wakefield_surface_get_compositor   (WakefieldSurface *surface);
+cairo_surface_t *    wakefield_surface_create_cairo_surface (WakefieldSurface *surface);
 
 struct wl_resource *wakefield_xdg_surface_new (struct wl_client   *client,
                                                struct wl_resource *shell_resource,
