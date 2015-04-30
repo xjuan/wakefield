@@ -210,10 +210,16 @@ wakefield_surface_get_compositor (WakefieldSurface *surface)
 }
 
 cairo_surface_t *
-wakefield_surface_create_cairo_surface (WakefieldSurface *surface)
+wakefield_surface_create_cairo_surface (WakefieldSurface *surface,
+                                        int *width_out, int *height_out)
 {
   struct wl_shm_buffer *shm_buffer;
   cairo_surface_t *cr_surface = NULL;
+
+  if (width_out)
+    *width_out = -1;
+  if (height_out)
+    *height_out = -1;
 
   shm_buffer = wl_shm_buffer_get (surface->current.buffer);
   if (shm_buffer)
@@ -227,6 +233,11 @@ wakefield_surface_create_cairo_surface (WakefieldSurface *surface)
       int cr_stride;
       uint8_t *cr_pixels;
       int y;
+
+      if (width_out)
+        *width_out = width / surface->current.scale;
+      if (height_out)
+        *height_out = height / surface->current.scale;
 
       cr_surface = cairo_image_surface_create (format, width, height);
       cr_pixels = cairo_image_surface_get_data (cr_surface);

@@ -1011,15 +1011,19 @@ pointer_cursor_surface_committed (WakefieldSurface *surface,
     wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
   cairo_surface_t *cursor_surface;
+  int w, h;
 
-  cursor_surface = wakefield_surface_create_cairo_surface (surface);
+  cursor_surface = wakefield_surface_create_cairo_surface (surface, &w, &h);
   if (cursor_surface)
     {
       GdkCursor *gdk_cursor;
 
+      /* Note: XRender BadMatches if the hotspot is outside the cursor, so
+         limit it here */
       gdk_cursor = gdk_cursor_new_from_surface (gdk_window_get_display (window),
                                                 cursor_surface,
-                                                pointer->hot_x, pointer->hot_y);
+                                                MIN (w, pointer->hot_x),
+                                                MIN (h, pointer->hot_y));
       cairo_surface_destroy (cursor_surface);
       gdk_window_set_cursor (window, gdk_cursor);
       g_object_unref (gdk_cursor);

@@ -70,7 +70,9 @@ GdkWindow *          wakefield_surface_get_window       (struct wl_resource  *su
 gboolean             wakefield_surface_is_mapped        (struct wl_resource  *surface_resource);
 
 WakefieldCompositor *wakefield_surface_get_compositor   (WakefieldSurface *surface);
-cairo_surface_t *    wakefield_surface_create_cairo_surface (WakefieldSurface *surface);
+cairo_surface_t *    wakefield_surface_create_cairo_surface (WakefieldSurface *surface,
+                                                             int              *width,
+                                                             int              *height);
 
 struct wl_resource *wakefield_xdg_surface_new (struct wl_client   *client,
                                                struct wl_resource *shell_resource,
