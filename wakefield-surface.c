@@ -23,10 +23,35 @@
 
 #include "config.h"
 
+#include <string.h>
 #include <sys/time.h>
 
 #include "wakefield-private.h"
 #include "xdg-shell-server-protocol.h"
+
+#define WAKEFIELD_TYPE_SURFACE            (wakefield_surface_get_type ())
+#define WAKEFIELD_SURFACE(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), WAKEFIELD_TYPE_SURFACE, WakefieldSurface))
+#define WAKEFIELD_SURFACE_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass),  WAKEFIELD_TYPE_SURFACE, WakefieldSurfaceClass))
+#define WAKEFIELD_IS_SURFACE(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), WAKEFIELD_TYPE_SURFACE))
+#define WAKEFIELD_IS_SURFACE_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass),  WAKEFIELD_TYPE_SURFACE))
+#define WAKEFIELD_SURFACE_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),  WAKEFIELD_TYPE_SURFACE, WakefieldSurfaceClass))
+
+typedef struct _WakefieldSurfaceClass WakefieldSurfaceClass;
+
+struct _WakefieldSurfaceClass
+{
+  GObjectClass parent_class;
+};
+
+GType wakefield_surface_get_type (void) G_GNUC_CONST;
+
+enum {
+  COMMITTED,
+
+  LAST_SIGNAL
+};
+
+static guint signals[LAST_SIGNAL];
 
 struct WakefieldSurfacePendingState
 {
@@ -37,10 +62,14 @@ struct WakefieldSurfacePendingState
   struct wl_list frame_callbacks;
 };
 
-struct WakefieldSurface
+struct _WakefieldSurface
 {
+  GObject parent;
+
   WakefieldCompositor *compositor;
   struct wl_resource *resource;
+
+  WakefieldSurfaceRole role;
 
   struct WakefieldXdgSurface *xdg_surface;
   struct WakefieldXdgPopup *xdg_popup;
@@ -52,7 +81,7 @@ struct WakefieldSurface
 
 struct WakefieldXdgSurface
 {
-  struct WakefieldSurface *surface;
+  WakefieldSurface *surface;
 
   struct wl_resource *resource;
   GdkWindow *window;
@@ -60,9 +89,8 @@ struct WakefieldXdgSurface
 
 struct WakefieldXdgPopup
 {
-  struct WakefieldSurface *surface;
-
-  struct WakefieldSurface *parent_surface;
+  WakefieldSurface *surface;
+  WakefieldSurface *parent_surface;
 
   GtkWidget *toplevel;
   GtkWidget *drawing_area;
@@ -72,10 +100,12 @@ struct WakefieldXdgPopup
   struct wl_resource *resource;
 };
 
+G_DEFINE_TYPE (WakefieldSurface, wakefield_surface, G_TYPE_OBJECT);
+
 struct wl_resource *
 wakefield_surface_get_xdg_surface  (struct wl_resource  *surface_resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
   if (surface->xdg_surface)
     return surface->xdg_surface->resource;
@@ -85,7 +115,7 @@ wakefield_surface_get_xdg_surface  (struct wl_resource  *surface_resource)
 struct wl_resource *
 wakefield_surface_get_xdg_popup  (struct wl_resource  *surface_resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
   if (surface->xdg_popup)
     return surface->xdg_popup->resource;
@@ -95,21 +125,27 @@ wakefield_surface_get_xdg_popup  (struct wl_resource  *surface_resource)
 WakefieldSurfaceRole
 wakefield_surface_get_role (struct wl_resource  *surface_resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
-  if (surface->xdg_surface)
-    return WAKEFIELD_SURFACE_ROLE_XDG_SURFACE;
+  return surface->role;
+}
 
-  if (surface->xdg_popup)
-    return WAKEFIELD_SURFACE_ROLE_XDG_POPUP;
+void
+wakefield_surface_set_role (struct wl_resource *surface_resource,
+                            WakefieldSurfaceRole role)
+{
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
-  return WAKEFIELD_SURFACE_ROLE_NONE;
+  g_assert (surface->role == WAKEFIELD_SURFACE_ROLE_NONE ||
+            surface->role == role);
+
+  surface->role = role;
 }
 
 gboolean
 wakefield_surface_is_mapped (struct wl_resource  *surface_resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
   return surface->mapped;
 }
@@ -117,7 +153,7 @@ wakefield_surface_is_mapped (struct wl_resource  *surface_resource)
 GdkWindow *
 wakefield_surface_get_window (struct wl_resource  *surface_resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
   if (surface->xdg_surface)
     return wakefield_xdg_surface_get_window (surface->xdg_surface->resource);
@@ -129,7 +165,7 @@ wakefield_surface_get_window (struct wl_resource  *surface_resource)
 }
 
 static void
-wakefield_surface_get_current_size (struct WakefieldSurface *surface,
+wakefield_surface_get_current_size (WakefieldSurface *surface,
                                     int *width, int *height)
 {
   struct wl_shm_buffer *shm_buffer;
@@ -167,11 +203,56 @@ get_time (void)
   return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+WakefieldCompositor *
+wakefield_surface_get_compositor (WakefieldSurface *surface)
+{
+  return surface->compositor;
+}
+
+cairo_surface_t *
+wakefield_surface_create_cairo_surface (WakefieldSurface *surface)
+{
+  struct wl_shm_buffer *shm_buffer;
+  cairo_surface_t *cr_surface = NULL;
+
+  shm_buffer = wl_shm_buffer_get (surface->current.buffer);
+  if (shm_buffer)
+    {
+      uint8_t *shm_pixels = wl_shm_buffer_get_data (shm_buffer);
+      cairo_format_t format =
+        cairo_format_for_wl_shm_format (wl_shm_buffer_get_format (shm_buffer));
+      int width = wl_shm_buffer_get_width (shm_buffer);
+      int height = wl_shm_buffer_get_height (shm_buffer);
+      int shm_stride = wl_shm_buffer_get_stride (shm_buffer);
+      int cr_stride;
+      uint8_t *cr_pixels;
+      int y;
+
+      cr_surface = cairo_image_surface_create (format, width, height);
+      cr_pixels = cairo_image_surface_get_data (cr_surface);
+      cr_stride = cairo_image_surface_get_stride (cr_surface);
+      wl_shm_buffer_begin_access (shm_buffer);
+      for (y = 0; y < height; y++)
+        {
+          memcpy (cr_pixels + y * cr_stride,
+                  shm_pixels + y * shm_stride,
+                  MIN (cr_stride, shm_stride));
+        }
+      wl_shm_buffer_end_access (shm_buffer);
+      cairo_surface_set_device_scale (cr_surface,
+                                      surface->current.scale,
+                                      surface->current.scale);
+      cairo_surface_mark_dirty (cr_surface);
+    }
+
+  return cr_surface;
+}
+
 void
 wakefield_surface_draw (struct wl_resource *surface_resource,
                         cairo_t                 *cr)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   struct wl_shm_buffer *shm_buffer;
 
   shm_buffer = wl_shm_buffer_get (surface->current.buffer);
@@ -234,7 +315,7 @@ wl_surface_attach (struct wl_client *client,
                    struct wl_resource *buffer_resource,
                    gint32 dx, gint32 dy)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
   /* Ignore dx/dy in our case */
   surface->pending.buffer = buffer_resource;
@@ -245,7 +326,7 @@ wl_surface_damage (struct wl_client *client,
                    struct wl_resource *surface_resource,
                    int32_t x, int32_t y, int32_t width, int32_t height)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   cairo_rectangle_int_t rectangle = { x, y, width, height };
   cairo_region_union_rectangle (surface->damage, &rectangle);
 }
@@ -257,7 +338,7 @@ wl_surface_frame (struct wl_client *client,
                   struct wl_resource *surface_resource,
                   uint32_t callback_id)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
 
   struct wl_resource *callback = wl_resource_create (client, &wl_callback_interface,
                                                      WL_CALLBACK_VERSION, callback_id);
@@ -278,7 +359,7 @@ wl_surface_set_input_region (struct wl_client *client,
                              struct wl_resource *surface_resource,
                              struct wl_resource *region_resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   g_clear_pointer (&surface->pending.input_region, cairo_region_destroy);
   if (region_resource)
     {
@@ -290,7 +371,7 @@ static void
 wl_surface_commit (struct wl_client *client,
                    struct wl_resource *resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (resource);
   struct wl_shm_buffer *shm_buffer;
   cairo_region_t *clear_region = NULL;
   cairo_rectangle_int_t rect = { 0, };
@@ -393,6 +474,8 @@ wl_surface_commit (struct wl_client *client,
       surface->mapped = TRUE;
       wakefield_compositor_surface_mapped (surface->compositor, surface->resource);
     }
+
+  g_signal_emit (surface, signals[COMMITTED], 0);
 }
 
 static void
@@ -408,7 +491,7 @@ wl_surface_set_buffer_scale (struct wl_client *client,
                              struct wl_resource *resource,
                              int32_t scale)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (resource);
   surface->pending.scale = scale;
 }
 
@@ -424,7 +507,7 @@ destroy_pending_state (struct WakefieldSurfacePendingState *state)
 /* This needs to be called both from wl_surface and xdg_[surface|popup] finalizer,
    because destructors are called in random order during client disconnect */
 static void
-wl_surface_unmap (struct WakefieldSurface *surface)
+wl_surface_unmap (WakefieldSurface *surface)
 {
   if (surface->mapped)
     {
@@ -437,7 +520,7 @@ wl_surface_unmap (struct WakefieldSurface *surface)
 static void
 wl_surface_finalize (struct wl_resource *resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (resource);
 
   wl_surface_unmap (surface);
 
@@ -452,7 +535,7 @@ wl_surface_finalize (struct wl_resource *resource)
   destroy_pending_state (&surface->pending);
   destroy_pending_state (&surface->current);
 
-  g_slice_free (struct WakefieldSurface, surface);
+  g_object_unref (surface);
 }
 
 static const struct wl_surface_interface surface_implementation = {
@@ -473,9 +556,9 @@ wakefield_surface_new (WakefieldCompositor *compositor,
                        struct wl_resource *compositor_resource,
                        uint32_t id)
 {
-  struct WakefieldSurface *surface;
+  WakefieldSurface *surface;
 
-  surface = g_slice_new0 (struct WakefieldSurface);
+  surface = g_object_new (WAKEFIELD_TYPE_SURFACE, NULL);
   surface->compositor = compositor;
   surface->damage = cairo_region_create ();
 
@@ -646,7 +729,7 @@ wakefield_xdg_surface_realize (struct wl_resource *xdg_surface_resource,
 {
   WakefieldCompositor *compositor;
   struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_surface_resource);
-  struct WakefieldSurface *surface = xdg_surface->surface;
+  WakefieldSurface *surface = xdg_surface->surface;
   GdkWindowAttr attributes;
   gint attributes_mask;
   int width, height;
@@ -687,7 +770,7 @@ wakefield_xdg_surface_unrealize (struct wl_resource *xdg_surface_resource)
 {
   WakefieldCompositor *compositor;
   struct WakefieldXdgSurface *xdg_surface = wl_resource_get_user_data (xdg_surface_resource);
-  struct WakefieldSurface *surface = xdg_surface->surface;
+  WakefieldSurface *surface = xdg_surface->surface;
 
   if (xdg_surface->surface)
     wl_surface_unmap (xdg_surface->surface);
@@ -711,8 +794,11 @@ wakefield_xdg_surface_new (struct wl_client *client,
                            uint32_t id,
                            struct wl_resource *surface_resource)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
   struct WakefieldXdgSurface *xdg_surface;
+
+  wakefield_surface_set_role (surface_resource,
+                              WAKEFIELD_SURFACE_ROLE_XDG_SURFACE);
 
   xdg_surface = g_slice_new0 (struct WakefieldXdgSurface);
   xdg_surface->surface = surface;
@@ -859,7 +945,7 @@ void
 wakefield_xdg_popup_close (struct wl_resource *xdg_popup_resource)
 {
   struct WakefieldXdgPopup *xdg_popup = wl_resource_get_user_data (xdg_popup_resource);
-  struct WakefieldSurface *surface = xdg_popup->surface;
+  WakefieldSurface *surface = xdg_popup->surface;
 
   if (surface && surface->mapped)
     {
@@ -872,6 +958,15 @@ wakefield_xdg_popup_close (struct wl_resource *xdg_popup_resource)
   xdg_popup_send_popup_done (xdg_popup_resource);
 }
 
+static GdkWindow *
+get_toplevel (WakefieldSurface *surface)
+{
+  if (surface->xdg_popup)
+    return gtk_widget_get_window (surface->xdg_popup->toplevel);
+  else
+    return surface->xdg_surface->window;
+}
+
 struct wl_resource *
 wakefield_xdg_popup_new (WakefieldCompositor *compositor,
                          struct wl_client   *client,
@@ -882,14 +977,24 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
                          guint32 serial,
                          gint32 x, gint32 y)
 {
-  struct WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
-  struct WakefieldSurface *parent_surface = wl_resource_get_user_data (parent_resource);
+  WakefieldSurface *surface = wl_resource_get_user_data (surface_resource);
+  WakefieldSurface *parent_surface = wl_resource_get_user_data (parent_resource);
   struct WakefieldXdgPopup *xdg_popup;
+  GdkWindow *popup_window;
+
+  wakefield_surface_set_role (surface_resource,
+                              WAKEFIELD_SURFACE_ROLE_XDG_SURFACE);
 
   xdg_popup = g_slice_new0 (struct WakefieldXdgPopup);
   xdg_popup->surface = surface;
   xdg_popup->parent_surface = parent_surface;
+
   xdg_popup->toplevel = gtk_window_new (GTK_WINDOW_POPUP);
+  gtk_widget_realize (xdg_popup->toplevel);
+  popup_window = gtk_widget_get_window (xdg_popup->toplevel);
+  gdk_window_set_transient_for (popup_window, get_toplevel (parent_surface));
+  gdk_window_set_type_hint (popup_window, GDK_WINDOW_TYPE_HINT_POPUP_MENU);
+
   xdg_popup->drawing_area = gtk_drawing_area_new ();
   gtk_widget_set_events (xdg_popup->drawing_area,
                          GDK_POINTER_MOTION_MASK |
@@ -929,4 +1034,22 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
   wl_resource_set_implementation (xdg_popup->resource, &xdg_popup_implementation, xdg_popup, xdg_popup_finalize);
 
   return xdg_popup->resource;
+}
+
+static void
+wakefield_surface_init (WakefieldSurface *surface)
+{
+}
+
+static void
+wakefield_surface_class_init (WakefieldSurfaceClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  signals[COMMITTED] = g_signal_new ("committed",
+                                     G_TYPE_FROM_CLASS (object_class),
+                                     G_SIGNAL_RUN_FIRST,
+                                     0,
+                                     NULL, NULL, NULL,
+                                     G_TYPE_NONE, 0);
 }

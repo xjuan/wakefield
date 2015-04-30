@@ -48,8 +48,8 @@
 struct WakefieldPointer
 {
   struct wl_list resource_list;
-  struct wl_resource *cursor_surface;
 
+  guint32 serial;
   guint32 button_count;
 
   /* This is set to the surface that has been sent the enter notify (and no leave).
@@ -59,6 +59,11 @@ struct WakefieldPointer
   /* This is what we got told by gdk about the current state. The difference is
      that we don't forward enter/leave events during an implicit grab */
   struct wl_resource *current_gdk_surface;
+
+  WakefieldSurface *cursor_surface;
+  gulong cursor_surface_commit_listener;
+  int hot_x;
+  int hot_y;
 
   struct wl_client *grab_client;
   guint32 grab_button;
@@ -136,6 +141,10 @@ G_DEFINE_TYPE_WITH_PRIVATE (WakefieldCompositor, wakefield_compositor, GTK_TYPE_
 	for (resource = 0, resource = wl_resource_from_link((list)->prev);	\
 	     wl_resource_get_link(resource) != (list);				\
 	     resource = wl_resource_from_link(wl_resource_get_link(resource)->prev))
+
+static void
+unset_cursor_surface (struct WakefieldPointer *pointer,
+                      WakefieldSurface *cursor_surface);
 
 static void
 wakefield_compositor_realize (GtkWidget *widget)
@@ -350,13 +359,15 @@ static void
 send_enter (WakefieldCompositor *compositor, struct wl_resource  *surface, double x, double y)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *pointer_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
 
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
+
+  pointer->serial = wl_display_next_serial (priv->wl_display);
   if (pointer_resource)
-    wl_pointer_send_enter (pointer_resource, serial,
+    wl_pointer_send_enter (pointer_resource, pointer->serial,
                            surface,
                            wl_fixed_from_double (x),
                            wl_fixed_from_double (y));
@@ -366,13 +377,18 @@ static void
 send_leave (WakefieldCompositor *compositor, struct wl_resource  *surface)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *pointer_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
 
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
+
+  pointer->serial = wl_display_next_serial (priv->wl_display);
   if (pointer_resource)
-    wl_pointer_send_leave (pointer_resource, serial, surface);
+    wl_pointer_send_leave (pointer_resource, pointer->serial, surface);
+
+  if (pointer->cursor_surface)
+    unset_cursor_surface (pointer, pointer->cursor_surface);
 }
 
 static uint32_t
@@ -452,7 +468,6 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *pointer_resource, *xdg_popup_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
   guint32 button;
 
   if (event->type == GDK_2BUTTON_PRESS || event->type == GDK_3BUTTON_PRESS)
@@ -488,14 +503,14 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
       ensure_surface_entered (compositor, surface, event->x, event->y);
       pointer_resource = wakefield_compositor_get_pointer_for_client (compositor, wl_resource_get_client (surface));
       if (pointer_resource)
-        wl_pointer_send_button (pointer_resource, serial,
+        wl_pointer_send_button (pointer_resource, pointer->serial,
                                 event->time,
                                 button,
                                 (event->type == GDK_BUTTON_PRESS ? 1 : 0));
     }
 
   if (pointer->button_count == 1 && event->type == GDK_BUTTON_PRESS)
-    pointer->grab_serial = wl_display_get_serial (priv->wl_display);
+    pointer->grab_serial = pointer->serial;
 
   if (pointer->button_count == 0 && event->type == GDK_BUTTON_RELEASE)
     {
@@ -636,8 +651,6 @@ wakefield_compositor_send_leave (WakefieldCompositor *compositor,
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
-  struct wl_resource *pointer_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
   gboolean has_implicit_grab;
 
   if (surface == NULL)
@@ -658,13 +671,7 @@ wakefield_compositor_send_leave (WakefieldCompositor *compositor,
   g_assert (pointer->current_surface == surface);
   pointer->current_surface = NULL;
 
-  pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
-                                                                  wl_resource_get_client (surface));
-  if (pointer_resource)
-    {
-      wl_pointer_send_leave (pointer_resource, serial,
-                             surface);
-    }
+  send_leave (compositor, surface);
 }
 
 static void
@@ -755,7 +762,12 @@ wakefield_compositor_button_press_event (GtkWidget      *widget,
                                          GdkEventButton *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv =
+    wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *surface;
+
+  pointer->serial = wl_display_next_serial (priv->wl_display);
 
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
@@ -770,7 +782,12 @@ wakefield_compositor_button_release_event (GtkWidget      *widget,
                                            GdkEventButton *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv =
+    wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *surface;
+
+  pointer->serial = wl_display_next_serial (priv->wl_display);
 
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
@@ -975,12 +992,99 @@ unbind_resource (struct wl_resource *resource)
 }
 
 static void
+unset_cursor_surface (struct WakefieldPointer *pointer,
+                      WakefieldSurface *cursor_surface)
+{
+  g_signal_handler_disconnect (cursor_surface,
+                               pointer->cursor_surface_commit_listener);
+  g_object_remove_weak_pointer (G_OBJECT (cursor_surface),
+                                (gpointer*)&pointer->cursor_surface);
+  pointer->cursor_surface = NULL;
+}
+
+static void
+pointer_cursor_surface_committed (WakefieldSurface *surface,
+                                  GdkWindow *window)
+{
+  WakefieldCompositor *compositor = wakefield_surface_get_compositor (surface);
+  WakefieldCompositorPrivate *priv =
+    wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
+  cairo_surface_t *cursor_surface;
+
+  cursor_surface = wakefield_surface_create_cairo_surface (surface);
+  if (cursor_surface)
+    {
+      GdkCursor *gdk_cursor;
+
+      gdk_cursor = gdk_cursor_new_from_surface (gdk_window_get_display (window),
+                                                cursor_surface,
+                                                pointer->hot_x, pointer->hot_y);
+      cairo_surface_destroy (cursor_surface);
+      gdk_window_set_cursor (window, gdk_cursor);
+      g_object_unref (gdk_cursor);
+    }
+}
+
+static void
 pointer_set_cursor (struct wl_client *client,
                     struct wl_resource *resource,
                     uint32_t serial,
                     struct wl_resource *surface_resource,
                     int32_t x, int32_t y)
 {
+  struct WakefieldPointer *pointer = wl_resource_get_user_data (resource);
+  WakefieldSurface *cursor_surface = NULL;
+  GdkWindow *window;
+
+  if (surface_resource)
+    {
+      cursor_surface = wl_resource_get_user_data (surface_resource);
+
+      switch (wakefield_surface_get_role (surface_resource))
+        {
+        case WAKEFIELD_SURFACE_ROLE_NONE:
+        case WAKEFIELD_SURFACE_ROLE_POINTER_CURSOR:
+          break;
+        case WAKEFIELD_SURFACE_ROLE_XDG_SURFACE:
+        case WAKEFIELD_SURFACE_ROLE_XDG_POPUP:
+          wl_resource_post_error (resource, WL_POINTER_ERROR_ROLE,
+                                  "This wl_surface already has a role");
+          break;
+        }
+
+      wakefield_surface_set_role (surface_resource,
+                                  WAKEFIELD_SURFACE_ROLE_POINTER_CURSOR);
+    }
+
+  if (pointer->serial != serial)
+    return;
+
+  if (pointer->current_surface == NULL)
+    return;
+
+  if (pointer->cursor_surface == cursor_surface)
+    return;
+
+  if (pointer->cursor_surface)
+    unset_cursor_surface (pointer, pointer->cursor_surface);
+
+  if (cursor_surface)
+    {
+      window = wakefield_surface_get_window (pointer->current_surface);
+      pointer->hot_x = x;
+      pointer->hot_y = y;
+      pointer->cursor_surface_commit_listener =
+        g_signal_connect_object (cursor_surface, "committed",
+                                 G_CALLBACK (pointer_cursor_surface_committed),
+                                 window, 0);
+      pointer->cursor_surface = cursor_surface;
+      g_object_add_weak_pointer (G_OBJECT (cursor_surface),
+                                 (gpointer*)&pointer->cursor_surface);
+      pointer_cursor_surface_committed (cursor_surface, window);
+    }
+  else
+    pointer->cursor_surface = NULL;;
 }
 
 static const struct wl_pointer_interface pointer_implementation = {
