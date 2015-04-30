@@ -993,6 +993,8 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
   WakefieldSurface *parent_surface = wl_resource_get_user_data (parent_resource);
   struct WakefieldXdgPopup *xdg_popup;
   GdkWindow *popup_window;
+  GdkScreen *screen = gtk_widget_get_screen (GTK_WIDGET (compositor));
+  GdkVisual *rgba_visual = gdk_screen_get_rgba_visual (screen);
 
   wakefield_surface_set_role (surface_resource,
                               WAKEFIELD_SURFACE_ROLE_XDG_SURFACE);
@@ -1002,6 +1004,11 @@ wakefield_xdg_popup_new (WakefieldCompositor *compositor,
   xdg_popup->parent_surface = parent_surface;
 
   xdg_popup->toplevel = gtk_window_new (GTK_WINDOW_POPUP);
+  gtk_window_set_screen (GTK_WINDOW (xdg_popup->toplevel), screen);
+  if (rgba_visual)
+    gtk_widget_set_visual (GTK_WIDGET (xdg_popup->toplevel), rgba_visual);
+
+  gtk_widget_set_app_paintable (GTK_WIDGET (xdg_popup->toplevel), TRUE);
   gtk_widget_realize (xdg_popup->toplevel);
   popup_window = gtk_widget_get_window (xdg_popup->toplevel);
   gdk_window_set_transient_for (popup_window, get_toplevel (parent_surface));
