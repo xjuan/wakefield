@@ -67,8 +67,6 @@ test_embedding_SOURCES =	\
 
 test_embedding_CFLAGS = $(AM_CFLAGS) $(GTK_CFLAGS)
 
-test_embedded_CFLAGS = $(AM_CFLAGS) $(GTK_CFLAGS)
-
 test_embedded_LDADD = libwakefield.la $(GTK_LIBS)
 
 test_embedded_SOURCES =	\
