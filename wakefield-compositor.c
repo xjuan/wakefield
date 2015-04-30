@@ -50,6 +50,7 @@ struct WakefieldPointer
   struct wl_list resource_list;
   struct wl_resource *cursor_surface;
 
+  guint32 serial;
   guint32 button_count;
 
   /* This is set to the surface that has been sent the enter notify (and no leave).
@@ -350,13 +351,15 @@ static void
 send_enter (WakefieldCompositor *compositor, struct wl_resource  *surface, double x, double y)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *pointer_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
 
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
+
+  pointer->serial = wl_display_next_serial (priv->wl_display);
   if (pointer_resource)
-    wl_pointer_send_enter (pointer_resource, serial,
+    wl_pointer_send_enter (pointer_resource, pointer->serial,
                            surface,
                            wl_fixed_from_double (x),
                            wl_fixed_from_double (y));
@@ -366,13 +369,15 @@ static void
 send_leave (WakefieldCompositor *compositor, struct wl_resource  *surface)
 {
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *pointer_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
 
   pointer_resource = wakefield_compositor_get_pointer_for_client (compositor,
                                                                   wl_resource_get_client (surface));
+
+  pointer->serial = wl_display_next_serial (priv->wl_display);
   if (pointer_resource)
-    wl_pointer_send_leave (pointer_resource, serial, surface);
+    wl_pointer_send_leave (pointer_resource, pointer->serial, surface);
 }
 
 static uint32_t
@@ -452,7 +457,6 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
   WakefieldCompositorPrivate *priv = wakefield_compositor_get_instance_private (compositor);
   struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *pointer_resource, *xdg_popup_resource;
-  uint32_t serial = wl_display_next_serial (priv->wl_display);
   guint32 button;
 
   if (event->type == GDK_2BUTTON_PRESS || event->type == GDK_3BUTTON_PRESS)
@@ -488,14 +492,14 @@ wakefield_compositor_send_button (WakefieldCompositor *compositor,
       ensure_surface_entered (compositor, surface, event->x, event->y);
       pointer_resource = wakefield_compositor_get_pointer_for_client (compositor, wl_resource_get_client (surface));
       if (pointer_resource)
-        wl_pointer_send_button (pointer_resource, serial,
+        wl_pointer_send_button (pointer_resource, pointer->serial,
                                 event->time,
                                 button,
                                 (event->type == GDK_BUTTON_PRESS ? 1 : 0));
     }
 
   if (pointer->button_count == 1 && event->type == GDK_BUTTON_PRESS)
-    pointer->grab_serial = wl_display_get_serial (priv->wl_display);
+    pointer->grab_serial = pointer->serial;
 
   if (pointer->button_count == 0 && event->type == GDK_BUTTON_RELEASE)
     {
@@ -747,7 +751,12 @@ wakefield_compositor_button_press_event (GtkWidget      *widget,
                                          GdkEventButton *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv =
+    wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *surface;
+
+  pointer->serial = wl_display_next_serial (priv->wl_display);
 
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
@@ -762,7 +771,12 @@ wakefield_compositor_button_release_event (GtkWidget      *widget,
                                            GdkEventButton *event)
 {
   WakefieldCompositor *compositor = WAKEFIELD_COMPOSITOR (widget);
+  WakefieldCompositorPrivate *priv =
+    wakefield_compositor_get_instance_private (compositor);
+  struct WakefieldPointer *pointer = &priv->seat.pointer;
   struct wl_resource *surface;
+
+  pointer->serial = wl_display_next_serial (priv->wl_display);
 
   surface = wakefield_compositor_get_xdg_surface_for_window (compositor, event->window);
 
