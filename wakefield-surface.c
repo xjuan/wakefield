@@ -442,6 +442,7 @@ wl_surface_commit (struct wl_client *client,
       gint root_x, root_y;
 
       gtk_widget_set_size_request (GTK_WIDGET (xdg_popup->drawing_area), new_width, new_height);
+      gtk_window_resize (GTK_WINDOW (xdg_popup->toplevel), new_width, new_height);
 
       if (!surface->mapped)
         {
